@@ -1,17 +1,23 @@
 services:
-  # linux/arm64/v8
-  mtproto-proxy:
+  # MTG (MTProto Gateway) - Alternative 1
+  mtproto-mtg:
     image: nineseconds/mtg:latest
-    container_name: mtproto-proxy
+    container_name: mtproto-mtg
     ports:
       - "8443:3128"
-    command: run --bind 0.0.0.0:3128 c6f96dae97f9ce5ebfd6a55b8d369a69
+    command: run --bind 0.0.0.0:3128 ${MTPROTO_MTG_SECRET}
     restart: always
-  mtproto-proxy-2:
+    env_file:
+      - .env
+
+  # Telegram Official Proxy - Alternative 2
+  mtproto-telegram:
     image: telegrammessenger/proxy:latest
-    container_name: mtproto-proxy
+    container_name: mtproto-telegram
     ports:
-      - "8443:443"
+      - "8444:443"
     environment:
-      - SECRET=e8c92e7ef920b52221c6315f711b5d9d
+      - SECRET=${MTPROTO_TELEGRAM_SECRET}
     restart: always
+    env_file:
+      - .env
