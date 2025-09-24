@@ -1,0 +1,56 @@
+# Environment files containing secrets
+.env
+.env.*
+!.env.example
+
+# SSL certificates and private keys
+acme.json
+*.pem
+*.key
+*.crt
+
+# Docker and container data
+.docker/
+
+# Logs
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# Database data directories (if mounted locally)
+data/
+pgdata/
+mongodata/
+redisdata/
+
+# Temporary files
+temp/
+tmp/
+
+# User-specific application data that shouldn't be shared
+StirlingPDF/logs/
+StirlingPDF/pipeline/
+StirlingPDF/customFiles/
+
+# Stirling PDF application data and configs
+StirlingPDF/

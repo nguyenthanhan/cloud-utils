@@ -1,0 +1,8 @@
+services:
+  mtproto-proxy:
+    image: nineseconds/mtg:latest
+    container_name: mtproto-proxy
+    ports:
+      - "8443:3128"
+    command: run --bind 0.0.0.0:3128 c6f96dae97f9ce5ebfd6a55b8d369a69
+    restart: always
