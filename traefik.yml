@@ -17,6 +17,16 @@ entryPoints:
             sans:
               - "*.heimerng.dev"
 
+  # TCP entrypoints for databases (using custom ports for security)
+  postgres-tcp:
+    address: ":15432"
+  
+  mongodb-tcp:
+    address: ":27018"
+    
+  redis-tcp:
+    address: ":16379"
+
 api:
   dashboard: true
 

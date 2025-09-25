@@ -1,63 +1,83 @@
 # Traefik Infrastructure
 
-This repository contains the Docker Compose configuration for a complete infrastructure setup with Traefik as a reverse proxy and SSL certificate management.
+Docker Compose setup with Traefik reverse proxy and SSL certificates via Cloudflare.
 
-## Services Included
+## Services
 
-- **Traefik v3.0** - Reverse proxy with automatic SSL certificates via Cloudflare DNS challenge
-- **PostgreSQL 16** - Relational database
-- **MongoDB 8** - Document database
-- **Redis 7** - In-memory data store
-- **Portainer** - Docker container management UI
-- **Stirling PDF** - PDF manipulation tools
+- **Traefik v3.0** - Reverse proxy with SSL
+- **PostgreSQL 16** - Database
+- **MongoDB 8** - Database
+- **Redis 7** - Cache
+- **Portainer** - Docker UI
+- **Stirling PDF** - PDF tools
 
-## Setup
+## Quick Start
 
-1. Copy the environment template:
+1. Copy environment file:
    ```bash
    cp .env.example .env
    ```
 
-2. Edit `.env` with your actual credentials and API tokens
+2. Edit .env with your credentials
 
-3. Ensure the external network exists:
+3. Create network:
    ```bash
    docker network create my_network
    ```
 
-4. Start the services:
+4. Start services:
    ```bash
    docker compose up -d
    ```
 
-## Database Access
+## Database Connections
 
-- **PostgreSQL**: `localhost:5432`
-- **MongoDB**: `localhost:27017`
-- **Redis**: `localhost:6379`
+All databases use custom ports and specific hostnames for security:
 
-All credentials are stored in the `.env` file.
+### PostgreSQL
+```
+Host: postgres-1riun.heimerng.dev
+Port: 15432
+User: postgres
+Password: secure_postgres_password_123
+Database: myapp
+```
 
-## Web Interfaces
+### MongoDB
+```
+Host: mongodb-g8ycd.heimerng.dev
+Port: 27018
+User: mongo_admin
+Password: secure_mongo_password_123
+Database: myapp
+```
+
+### Redis
+```
+Host: redis-gbh5t.heimerng.dev
+Port: 16379
+Password: secure_redis_password_123
+```
+
+## Web Access
 
 - Traefik Dashboard: https://traefik.heimerng.dev
 - Portainer: https://portainer.heimerng.dev
-- Stirling PDF: https://pdf.heimerng.dev
+- PDF Tools: https://pdf.heimerng.dev
 
-## SSL Certificates
+## Security Features
 
-SSL certificates are automatically obtained and renewed via Cloudflare DNS challenge. The `acme.json` file stores the certificates and should never be committed to version control.
+- Custom ports (not default 5432, 27017, 6379)
+- Specific database hostnames with random suffixes
+- SSL certificates via Cloudflare
+- Password authentication required
+- Default ports blocked
 
-## Data Persistence
+## DNS Setup
 
-All databases use Docker volumes for data persistence:
-- `postgres_data`
-- `mongodb_data`
-- `mongodb_config`
-- `redis_data`
-
-## Security Notes
-
-- The `.env` file contains sensitive credentials and is excluded from version control
-- The `acme.json` file contains SSL certificates and private keys
-- Ensure proper file permissions on sensitive files
+Add these A records in Cloudflare:
+```
+postgres-1riun.heimerng.dev → your-server-ip
+mongodb-g8ycd.heimerng.dev → your-server-ip  
+redis-gbh5t.heimerng.dev → your-server-ip
+```
