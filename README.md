@@ -1,90 +1,231 @@
-# Traefik Infrastructure
+# Traefik Cloud Infrastructure
 
-Docker Compose setup with Traefik reverse proxy and SSL certificates via Cloudflare.
+Modern Docker Compose setup with Traefik v3 reverse proxy, automatic SSL certificates via Cloudflare, and comprehensive database stack.
 
-## Services
+## 🚀 Services Included
 
-- **Traefik v3.0** - Reverse proxy with SSL
-- **PostgreSQL 16** - Database
-- **MongoDB 8** - Database
-- **Redis 7** - Cache
-- **Portainer** - Docker UI
-- **Stirling PDF** - PDF tools
+| Service | Version | Purpose | Access |
+|---------|---------|---------|--------|
+| **Traefik** | v3.0 | Reverse proxy with automatic SSL | `https://${TRAEFIK_HOST}` |
+| **PostgreSQL** | 16 | Relational database | Port 5432 (IP-restricted) |
+| **MongoDB** | 8 | Document database | Port 27017 (IP-restricted) |
+| **Redis** | 7 | Cache & session store | Port 6379 (IP-restricted) |
+| **Portainer** | Latest | Docker management UI | `https://${PORTAINER_HOST}` |
+| **Stirling PDF** | Latest | PDF processing tools | `https://${PDF_HOST}` |
 
-## Quick Start
+## 📋 Quick Start
 
-1. Copy environment file:
-   ```bash
-   cp .env.example .env
-   ```
+### 1. Clone and Setup
+```bash
+git clone <your-repo-url>
+cd traefik
+```
 
-2. Edit .env with your credentials
+### 2. Configure Environment
+```bash
+# Copy template and customize
+cp .env.example .env
+nano .env  # Edit with your values
+```
 
-3. Create network:
-   ```bash
-   docker network create my_network
-   ```
+### 3. Required Environment Variables
+Edit `.env` with your configuration:
+```bash
+# Domain & SSL
+TRAEFIK_DOMAIN=yourdomain.com
+TRAEFIK_EMAIL=your.email@example.com
+CF_DNS_API_TOKEN=your_cloudflare_token
+CF_API_EMAIL=your.email@example.com
 
-4. Start services:
-   ```bash
-   docker compose up -d
-   ```
+# Service Hostnames
+TRAEFIK_HOST=traefik.yourdomain.com
+PORTAINER_HOST=portainer.yourdomain.com
+PDF_HOST=pdf.yourdomain.com
 
-## Database Connections
+# Database Passwords (change these!)
+POSTGRES_PASSWORD=secure_postgres_password_change_me
+MONGO_INITDB_ROOT_PASSWORD=secure_mongo_password_change_me
+REDIS_PASSWORD=secure_redis_password_change_me
+```
 
-All databases use standard ports and specific hostnames via Traefik:
+### 4. Create Docker Network
+```bash
+docker network create my_network
+```
+
+### 5. Start Services
+```bash
+docker compose up -d
+```
+
+## 🗄️ Database Connections
 
 ### PostgreSQL
-```
-Host: postgres-1riun.heimerng.dev
+```bash
+# Connection details
+Host: your-server-ip
 Port: 5432
 User: postgres
-Password: secure_postgres_password_123
+Password: ${POSTGRES_PASSWORD}
 Database: myapp
+
+# Connection string
+postgresql://postgres:${POSTGRES_PASSWORD}@your-server-ip:5432/myapp
 ```
 
 ### MongoDB
-```
-Host: mongodb-g8ycd.heimerng.dev
+```bash
+# Connection details
+Host: your-server-ip
 Port: 27017
 User: mongo_admin
-Password: secure_mongo_password_123
+Password: ${MONGO_INITDB_ROOT_PASSWORD}
 Database: myapp
 AuthSource: admin
-```
 
-**MongoDB URI:**
-```
-mongodb://mongo_admin:secure_mongo_password_123@mongodb-g8ycd.heimerng.dev:27017/myapp?authSource=admin
+# Connection URI
+mongodb://mongo_admin:${MONGO_INITDB_ROOT_PASSWORD}@your-server-ip:27017/myapp?authSource=admin
 ```
 
 ### Redis
-```
-Host: redis-gbh5t.heimerng.dev
+```bash
+# Connection details
+Host: your-server-ip
 Port: 6379
-Password: secure_redis_password_123
+Password: ${REDIS_PASSWORD}
+
+# Connection string
+redis://:${REDIS_PASSWORD}@your-server-ip:6379
 ```
 
-## Web Access
+## 🌐 Web Access
 
-- Traefik Dashboard: https://traefik.heimerng.dev
-- Portainer: https://portainer.heimerng.dev
-- PDF Tools: https://pdf.heimerng.dev
+Access these services via your configured domains:
+- **Traefik Dashboard**: `https://${TRAEFIK_HOST}` (Basic Auth: test/password)
+- **Portainer**: `https://${PORTAINER_HOST}`
+- **Stirling PDF**: `https://${PDF_HOST}`
 
-## Security Features
+## 🔒 Security Features
 
-- Database hostnames with random suffixes for obscurity
-- SSL certificates via Cloudflare
-- Password authentication required
-- Access only through Traefik reverse proxy
+### Database Security
+- **IP Restriction**: Database ports only accessible from specific IP addresses
+- **Firewall Protection**: UFW rules deny all unauthorized access
+- **Password Authentication**: All databases require strong passwords
+- **Internal Network**: Services communicate via Docker network
 
-## DNS Setup
+### Web Security
+- **Automatic SSL**: Let's Encrypt certificates via Cloudflare DNS challenge
+- **HTTP → HTTPS**: Automatic redirection for all web traffic
+- **Basic Authentication**: Traefik dashboard protected
+- **Fail2ban Protection**: SSH brute-force protection with port scan detection
 
-Add these A records in Cloudflare (DNS only - grey cloud):
+### Network Security
+- **Reverse Proxy**: All web traffic routed through Traefik
+- **Internal Communication**: Services use Docker network names
+- **Exposed Ports**: Only HTTP (80), HTTPS (443), and database ports exposed
+
+## 🛡️ Firewall Configuration
+
+The setup includes UFW firewall rules:
+```bash
+# Web traffic (public)
+80/tcp    ALLOW    Anywhere
+443/tcp   ALLOW    Anywhere
+
+# Database access (IP-restricted)
+5432/tcp  ALLOW    from specific-ip  # PostgreSQL
+6379/tcp  ALLOW    from specific-ip  # Redis  
+27017/tcp ALLOW    from specific-ip  # MongoDB
 ```
-postgres-1riun.heimerng.dev → your-server-ip
-mongodb-g8ycd.heimerng.dev → your-server-ip  
-redis-gbh5t.heimerng.dev → your-server-ip
+
+## 📊 Monitoring & Management
+
+### Container Health
+```bash
+# Check service status
+docker compose ps
+
+# View logs
+docker compose logs -f [service-name]
+
+# Restart services
+docker compose restart [service-name]
 ```
 
-**Important:** Database hostnames must be set to **DNS only** (grey cloud) in Cloudflare, not proxied (orange cloud), because database ports cannot go through Cloudflare proxy.
+### Fail2ban Status
+```bash
+# Check SSH protection
+sudo fail2ban-client status sshd
+
+# Check port scan detection
+sudo fail2ban-client status portscan
+```
+
+## 🔧 Configuration Files
+
+| File | Purpose | Notes |
+|------|---------|-------|
+| `.env` | Your configuration | **Never commit to git** |
+| `.env.example` | Configuration template | Safe to commit |
+| `docker-compose.yml` | Service definitions | Uses environment variables |
+| `acme.json` | SSL certificates | Auto-generated by Traefik |
+
+## 🚀 Deployment Tips
+
+### For Production
+1. Change all default passwords in `.env`
+2. Configure proper firewall rules for your IP
+3. Set up monitoring and backups
+4. Review and customize Traefik dashboard auth
+
+### For Development
+1. Use `.env.example` as starting point
+2. Consider exposing database ports locally if needed
+3. Enable debug logging: `TRAEFIK_LOG_LEVEL=DEBUG`
+
+## 🆘 Troubleshooting
+
+### SSL Certificate Issues
+```bash
+# Check certificate status
+docker compose logs traefik | grep -i acme
+
+# Verify DNS challenge
+dig TXT _acme-challenge.yourdomain.com
+```
+
+### Database Connection Issues
+```bash
+# Test database connectivity
+docker exec postgres pg_isready -U postgres
+docker exec redis redis-cli ping
+docker exec mongodb mongosh --eval "db.adminCommand('ping')"
+```
+
+### Network Issues
+```bash
+# Verify Docker network
+docker network ls | grep my_network
+
+# Check service connectivity
+docker compose exec traefik ping postgres
+```
+
+## 📝 Environment Variables Reference
+
+See `.env.example` for complete list of configurable variables including:
+- Traefik configuration (domain, SSL, logging)
+- Database settings (passwords, users, databases)
+- Service hostnames and ports
+- Application-specific settings
+
+## 🔗 External Dependencies
+
+- **Cloudflare Account**: For DNS management and SSL certificates
+- **Domain Name**: Must be configured in Cloudflare
+- **Docker & Docker Compose**: Container runtime
+- **UFW Firewall**: For network security
+
+---
+
+**🎯 Ready to deploy?** Follow the Quick Start guide above and customize your `.env` file!
