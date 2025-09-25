@@ -32,12 +32,12 @@ Docker Compose setup with Traefik reverse proxy and SSL certificates via Cloudfl
 
 ## Database Connections
 
-All databases use custom ports and specific hostnames for security:
+All databases use standard ports and specific hostnames via Traefik:
 
 ### PostgreSQL
 ```
 Host: postgres-1riun.heimerng.dev
-Port: 15432
+Port: 5432
 User: postgres
 Password: secure_postgres_password_123
 Database: myapp
@@ -46,16 +46,22 @@ Database: myapp
 ### MongoDB
 ```
 Host: mongodb-g8ycd.heimerng.dev
-Port: 27018
+Port: 27017
 User: mongo_admin
 Password: secure_mongo_password_123
 Database: myapp
+AuthSource: admin
+```
+
+**MongoDB URI:**
+```
+mongodb://mongo_admin:secure_mongo_password_123@mongodb-g8ycd.heimerng.dev:27017/myapp?authSource=admin
 ```
 
 ### Redis
 ```
 Host: redis-gbh5t.heimerng.dev
-Port: 16379
+Port: 6379
 Password: secure_redis_password_123
 ```
 
@@ -67,17 +73,18 @@ Password: secure_redis_password_123
 
 ## Security Features
 
-- Custom ports (not default 5432, 27017, 6379)
-- Specific database hostnames with random suffixes
+- Database hostnames with random suffixes for obscurity
 - SSL certificates via Cloudflare
 - Password authentication required
-- Default ports blocked
+- Access only through Traefik reverse proxy
 
 ## DNS Setup
 
-Add these A records in Cloudflare:
+Add these A records in Cloudflare (DNS only - grey cloud):
 ```
 postgres-1riun.heimerng.dev → your-server-ip
 mongodb-g8ycd.heimerng.dev → your-server-ip  
 redis-gbh5t.heimerng.dev → your-server-ip
 ```
+
+**Important:** Database hostnames must be set to **DNS only** (grey cloud) in Cloudflare, not proxied (orange cloud), because database ports cannot go through Cloudflare proxy.
