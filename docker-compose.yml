@@ -46,6 +46,7 @@ services:
       # Logging
       - --log.level=${TRAEFIK_LOG_LEVEL}
       - --accesslog=true
+      - --accesslog.format=common
     environment:
       # Cloudflare API credentials from .env file
       - CF_API_EMAIL=${CF_API_EMAIL}
@@ -53,6 +54,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./acme.json:/acme.json
+      - /var/log/traefik:/var/log/traefik
     networks:
       - ${TRAEFIK_NETWORK}
     labels:

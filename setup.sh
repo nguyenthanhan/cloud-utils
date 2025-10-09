@@ -4,116 +4,9 @@
 # VPS Setup Script - Comprehensive VPS Configuration and Tool Installation
 # =============================================================================
 #
-# This script provides a comprehensive setup for new VPS instances, including
-# security hardening, development tools, and modern terminal utilities.
+# For detailed documentation, usage examples, and troubleshooting, see README.md
 #
-# =============================================================================
-# QUICK START
-# =============================================================================
-#
-# 1. Download the script:
-#    wget <setup.sh link>
-#
-# 2. Make it executable:
-#    chmod +x setup.sh
-#
-# 3. Run comprehensive setup (recommended for new VPS):
-#    ./setup.sh -vps
-#
-# =============================================================================
-# USAGE EXAMPLES
-# =============================================================================
-#
-# Complete VPS setup (includes security, all tools):
-#    ./setup.sh -vps
-#
-# Individual components:
-#    ./setup.sh -basic-tools                    # Essential system tools
-#    ./setup.sh -nvm                           # Node.js version manager
-#    ./setup.sh -python                        # Python with pip
-#    ./setup.sh -uv                            # Fast Python package manager
-#    ./setup.sh -docker                        # Docker container platform
-#    ./setup.sh -rclone                        # Cloud storage sync
-#    ./setup.sh -proxy                         # Squid proxy server
-#    ./setup.sh -zsh                           # Advanced shell
-#    ./setup.sh -zimfw                         # Zsh framework
-#    ./setup.sh -eza                           # Modern ls replacement
-#    ./setup.sh -zoxide                        # Smart cd command
-#    ./setup.sh -fastfetch                     # System info tool
-#    ./setup.sh -qbittorrent                   # Torrent client
-#    ./setup.sh -xrdp                          # Remote desktop
-#    ./setup.sh -firefox                       # Web browser
-#
-# Custom combinations:
-#    ./setup.sh -basic-tools -nvm -docker      # Development environment
-#    ./setup.sh -zsh -zimfw -eza -zoxide       # Terminal enhancements
-#    ./setup.sh -proxy -proxy-port=8080        # Custom proxy port
-#    ./setup.sh -vps -ssh-port=2222            # Custom SSH port
-#
-# =============================================================================
-# WHAT GETS INSTALLED WITH -vps
-# =============================================================================
-#
-# Security:
-#   • UFW firewall with secure rules
-#   • SSH security hardening (no root login, key-only auth)
-#   • Fail2ban for intrusion prevention
-#
-# Development Tools:
-#   • Node.js (NVM) with LTS version
-#   • Python 3 with pip
-#   • UV (fast Python package manager)
-#   • Docker with user group configuration
-#
-# Cloud & File Management:
-#   • Rclone for cloud storage
-#   • Squid proxy server (port 31288)
-#
-# Shell & Terminal:
-#   • Zsh with Zim framework
-#   • Eza (modern ls replacement)
-#   • Zoxide (smart cd command)
-#   • Fastfetch (system info)
-#
-# Additional Tools:
-#   • qBittorrent for downloads
-#   • XRDP for remote desktop (port 33899)
-#   • Firefox browser
-#
-# =============================================================================
-# PREREQUISITES
-# =============================================================================
-#
-# Before running this script, ensure:
-# 1. SSH keys are configured (to avoid being locked out)
-# 2. Sudo privileges are available
-# 3. Internet connectivity is working
-# 4. You're not running as root user
-#
-# =============================================================================
-# SAFETY FEATURES
-# =============================================================================
-#
-# • SSH key verification before disabling password auth
-# • Automatic rollback on installation failures
-# • Port number validation
-# • Internet connectivity checks
-# • Config file backups before modifications
-# • Progress indicators and clear error messages
-#
-# =============================================================================
-# TROUBLESHOOTING
-# =============================================================================
-#
-# If you get locked out:
-# 1. Contact your VPS provider for console access
-# 2. Restore SSH config: sudo cp /etc/ssh/sshd_config.backup /etc/ssh/sshd_config
-# 3. Restart SSH: sudo systemctl restart ssh (or sshd on some systems)
-#
-# If installation fails:
-# • The script will automatically rollback changes
-# • Check the error messages for specific issues
-# • Ensure you have sufficient disk space and memory
+# Quick Start: ./setup.sh
 #
 # =============================================================================
 
@@ -209,10 +102,10 @@ change_password() {
     echo "✅ Password changed successfully"
 }
 
-# Check if no parameters passed
+# Check if no parameters passed - run interactive VPS setup by default
 if [ $# -eq 0 ]; then
-    echo "No parameters provided. Use flags like: -vps -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -ssh-port=2222 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -apt-update"
-    exit 1
+    new_vps_setup
+    exit 0
 fi
 
 # Validate port numbers
@@ -738,32 +631,14 @@ configure_firewall() {
   # Install UFW if not already installed
   sudo apt-get install -y ufw
   
-  # Set default policies
-  sudo ufw default deny incoming
-  sudo ufw default allow outgoing
-  
-  # Allow SSH
-  sudo ufw allow ssh
-  
-  # Allow custom SSH port if specified
-  if [ "${VALUES[ssh-port]}" != "22" ]; then
-    sudo ufw allow "${VALUES[ssh-port]}"
-  fi
-  
-  # Allow proxy port
-  if [ -n "$PROXY_PORT" ]; then
-    sudo ufw allow "$PROXY_PORT"
-  fi
-  
-  # Allow XRDP port
-  sudo ufw allow 33899
-
-  sudo ufw allow 31288
+  # Set default policies - ALLOW ALL INCOMING
+   sudo ufw default allow incoming
+   sudo ufw default allow outgoing
   
   # Enable firewall
-  sudo ufw --force enable
+  sudo ufw enable
   
-  echo "✅ Firewall configured successfully."
+  echo "✅ Firewall configured successfully (all incoming traffic allowed)."
 }
 
 check_ssh_keys() {
@@ -796,107 +671,396 @@ configure_ssh_security() {
   sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
   
   # Configure SSH security settings
-  sudo sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-  sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-  sudo sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+  # Disable root login
+  sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  
+  # Disable password authentication (KEY ONLY!)
+  sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  
+  # Enable public key authentication
+  sudo sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+  
+  # Ensure changes are applied (add if not exists)
+  grep -q "^PermitRootLogin" /etc/ssh/sshd_config || echo "PermitRootLogin no" | sudo tee -a /etc/ssh/sshd_config
+  grep -q "^PasswordAuthentication" /etc/ssh/sshd_config || echo "PasswordAuthentication no" | sudo tee -a /etc/ssh/sshd_config
+  grep -q "^PubkeyAuthentication" /etc/ssh/sshd_config || echo "PubkeyAuthentication yes" | sudo tee -a /etc/ssh/sshd_config
   
   # Restart SSH service
   sudo systemctl restart $SSH_SERVICE
   
   echo "✅ SSH security configured successfully."
+  echo "⚠️  Password authentication is now DISABLED - SSH keys required!"
 }
 
 install_fail2ban() {
-  echo "Installing and configuring Fail2ban..."
+  echo "Installing and configuring Fail2ban with GeoIP blocking..."
   
-  # Install Fail2ban
-  sudo apt-get install -y fail2ban
+  # Get the directory where this script is located
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  CONFIG_DIR="$SCRIPT_DIR/fail2ban-configs"
   
-  # Create local configuration
-  sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+  # Check if config files exist
+  if [ ! -f "$CONFIG_DIR/fail2ban-jail.local" ]; then
+    echo "❌ Error: fail2ban-jail.local not found in $CONFIG_DIR"
+    echo "Please ensure fail2ban-configs folder exists with config files"
+    return 1
+  fi
   
-  # Configure basic settings
-  sudo tee -a /etc/fail2ban/jail.local > /dev/null <<EOF
-
-[DEFAULT]
-bantime = 3600
-findtime = 600
-maxretry = 3
-
-[sshd]
-enabled = true
-port = ssh
-logpath = /var/log/auth.log
-maxretry = 3
-EOF
+  # Install Fail2ban and GeoIP tools
+  sudo apt-get install -y fail2ban geoip-bin geoip-database geoip-database-extra
+  
+  # Backup existing jail.local if it exists
+  if [ -f /etc/fail2ban/jail.local ]; then
+    sudo cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.backup.$(date +%Y%m%d_%H%M%S)
+    echo "✅ Existing jail.local backed up"
+  fi
+  
+  # Copy configuration files
+  echo "Copying configuration files from fail2ban-configs/..."
+  
+  # Copy jail configuration
+  sudo cp "$CONFIG_DIR/fail2ban-jail.local" /etc/fail2ban/jail.local
+  echo "✅ Copied jail.local"
+  
+  # Copy filters
+  
+  if [ -f "$CONFIG_DIR/fail2ban-geoip-block.conf" ]; then
+    sudo cp "$CONFIG_DIR/fail2ban-geoip-block.conf" /etc/fail2ban/filter.d/geoip-block.conf
+    echo "✅ Copied geoip-block.conf"
+  fi
+  
+  # Copy actions
+  if [ -f "$CONFIG_DIR/fail2ban-geoip-action.conf" ]; then
+    sudo cp "$CONFIG_DIR/fail2ban-geoip-action.conf" /etc/fail2ban/action.d/geoip-action.conf
+    echo "✅ Copied geoip-action.conf"
+  fi
+  
+  # Enable GeoIP blocking in jail.local
+  echo "Enabling GeoIP blocking..."
+  sudo sed -i 's/^# \[geoip-block\]/[geoip-block]/' /etc/fail2ban/jail.local
+  sudo sed -i 's/^# enabled = false/enabled = true/' /etc/fail2ban/jail.local
+  sudo sed -i 's/^# filter = geoip-block/filter = geoip-block/' /etc/fail2ban/jail.local
+  sudo sed -i 's/^# action = geoip-action/action = geoip-action/' /etc/fail2ban/jail.local
+  sudo sed -i 's/^# logpath = \/var\/log\/auth.log/logpath = \/var\/log\/auth.log/' /etc/fail2ban/jail.local
+  sudo sed -i 's/^# maxretry = 1/maxretry = 1/' /etc/fail2ban/jail.local
+  sudo sed -i 's/^# bantime = -1/bantime = -1/' /etc/fail2ban/jail.local
+  echo "✅ GeoIP blocking enabled"
   
   # Start and enable Fail2ban
   sudo systemctl enable fail2ban
-  sudo systemctl start fail2ban
+  sudo systemctl restart fail2ban
   
-  echo "✅ Fail2ban installed and configured successfully."
+  # Wait for service to start
+  sleep 2
+  
+  # Verify installation
+  if systemctl is-active --quiet fail2ban; then
+    echo ""
+    echo "✅ Fail2ban installed and configured successfully with GeoIP support."
+    echo ""
+    echo "📊 Active jails:"
+    sudo fail2ban-client status
+    echo ""
+    echo "🌍 GeoIP Tools Installed:"
+    echo "  • geoiplookup - Command line tool to query country by IP"
+    echo "  • Example: geoiplookup 8.8.8.8"
+    echo ""
+    echo "🔒 Security Configuration:"
+    echo "  • SSH: 3 attempts → 1 day ban"
+    echo "  • GeoIP: Blocking CN, RU, KP (permanent ban)"
+    echo "  • Recidive: 2 bans in 7 days → 30 day ban"
+    echo ""
+    echo "📁 Configuration loaded from: $CONFIG_DIR"
+  else
+    echo "❌ Fail2ban installation failed."
+    return 1
+  fi
 }
 
 
+
+ask_install() {
+  local component="$1"
+  echo -e "\n❓ Install $component? (y/n): "
+  read -r response
+  case "$response" in
+    [yY][eE][sS]|[yY]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 new_vps_setup() {
-  echo "🚀 Starting comprehensive new VPS setup..."
-  echo "This will install essential tools, configure security, and optimize your VPS."
-  echo "Estimated time: 10-15 minutes"
+  echo "🚀 Starting interactive VPS setup..."
+  echo "Please answer all questions first, then installation will begin."
   echo ""
   
-  change_password
+  # Declare associative array for user choices
+  declare -A CHOICES
   
-  # System updates and essential packages
-  echo "📦 Step 1/8: Updating system and installing essential packages..."
-  update_apt
-  install_basic_tools
+  # ========== ASK ALL QUESTIONS FIRST ==========
   
-  # Security configurations
-  echo "🔒 Step 2/8: Configuring security..."
-  configure_firewall
-  configure_ssh_security
-  install_fail2ban
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  CONFIGURATION QUESTIONS"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  
+  # Password
+  echo "💾 Password:"
+  if ask_install "Change password to '1'"; then
+    CHOICES["password"]="yes"
+  else
+    CHOICES["password"]="no"
+  fi
+  
+  # System updates
+  echo ""
+  echo "📦 Step 1/8: System Updates & Essential Packages"
+  if ask_install "System updates and basic tools"; then
+    CHOICES["system_updates"]="yes"
+  else
+    CHOICES["system_updates"]="no"
+  fi
+  
+  # Security
+  echo ""
+  echo "🔒 Step 2/8: Security Configuration"
+  if ask_install "UFW Firewall"; then
+    CHOICES["firewall"]="yes"
+  else
+    CHOICES["firewall"]="no"
+  fi
+  if ask_install "SSH Security (key-only, no password)"; then
+    CHOICES["ssh_security"]="yes"
+  else
+    CHOICES["ssh_security"]="no"
+  fi
+  if ask_install "Fail2ban (intrusion prevention)"; then
+    CHOICES["fail2ban"]="yes"
+  else
+    CHOICES["fail2ban"]="no"
+  fi
   
   # Development tools
-  echo "🛠️ Step 3/8: Installing development tools..."
-  install_nvm
-  # install_python
-  # install_uv
+  echo ""
+  echo "🛠️ Step 3/8: Development Tools"
+  if ask_install "NVM (Node.js)"; then
+    CHOICES["nvm"]="yes"
+  else
+    CHOICES["nvm"]="no"
+  fi
+  if ask_install "Python"; then
+    CHOICES["python"]="yes"
+  else
+    CHOICES["python"]="no"
+  fi
+  if ask_install "UV (Python package manager)"; then
+    CHOICES["uv"]="yes"
+  else
+    CHOICES["uv"]="no"
+  fi
   
-  # Cloud and file management
-  echo "☁️ Step 4/8: Installing cloud and file management tools..."
-  install_rclone
-  install_docker
+  # Cloud and containers
+  echo ""
+  echo "☁️ Step 4/8: Cloud & File Management"
+  if ask_install "Rclone (cloud storage sync)"; then
+    CHOICES["rclone"]="yes"
+  else
+    CHOICES["rclone"]="no"
+  fi
+  if ask_install "Docker"; then
+    CHOICES["docker"]="yes"
+  else
+    CHOICES["docker"]="no"
+  fi
   
-  # Proxy and networking
-  echo "🌐 Step 5/8: Setting up proxy and networking..."
-  install_proxy
-  change_proxy_port "31288"
+  # Proxy
+  echo ""
+  echo "🌐 Step 5/8: Proxy & Networking"
+  if ask_install "Squid Proxy (port 31288)"; then
+    CHOICES["proxy"]="yes"
+  else
+    CHOICES["proxy"]="no"
+  fi
   
-  # Shell and terminal improvements
-  echo "🐚 Step 6/8: Installing shell improvements..."
-  # install_zsh
-  # install_zimfw
-  install_zoxide
-  install_eza
-  # install_fastfetch
+  # Shell improvements
+  echo ""
+  echo "🐚 Step 6/8: Shell & Terminal Improvements"
+  if ask_install "Zsh shell"; then
+    CHOICES["zsh"]="yes"
+  else
+    CHOICES["zsh"]="no"
+  fi
+  if ask_install "Zim framework (Zsh)"; then
+    CHOICES["zimfw"]="yes"
+  else
+    CHOICES["zimfw"]="no"
+  fi
+  if ask_install "Zoxide (smart cd)"; then
+    CHOICES["zoxide"]="yes"
+  else
+    CHOICES["zoxide"]="no"
+  fi
+  if ask_install "Eza (modern ls)"; then
+    CHOICES["eza"]="yes"
+  else
+    CHOICES["eza"]="no"
+  fi
+  if ask_install "Fastfetch (system info)"; then
+    CHOICES["fastfetch"]="yes"
+  else
+    CHOICES["fastfetch"]="no"
+  fi
   
   # Additional tools
-  echo "📱 Step 7/8: Installing additional tools..."
-  install_qbittorrent
-  install_xrdp
-  change_xrdp_port 33899
-  install_firefox
+  echo ""
+  echo "📱 Step 7/8: Additional Tools"
+  if ask_install "qBittorrent"; then
+    CHOICES["qbittorrent"]="yes"
+  else
+    CHOICES["qbittorrent"]="no"
+  fi
+  if ask_install "XRDP (remote desktop on port 33899)"; then
+    CHOICES["xrdp"]="yes"
+  else
+    CHOICES["xrdp"]="no"
+  fi
+  if ask_install "Firefox"; then
+    CHOICES["firefox"]="yes"
+  else
+    CHOICES["firefox"]="no"
+  fi
   
-  # Final step
-  echo "🧹 Step 8/8: Finalizing setup..."
+  # ========== INSTALLATION PHASE ==========
   
   echo ""
-  echo "✅ New VPS setup completed successfully!"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  STARTING INSTALLATION"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  
+  # Password
+  if [ "${CHOICES[password]}" = "yes" ]; then
+    change_password
+  fi
+  
+  # System updates
+  if [ "${CHOICES[system_updates]}" = "yes" ]; then
+    echo ""
+    echo "📦 Installing system updates and basic tools..."
+    update_apt
+    install_basic_tools
+  fi
+  
+  # Security
+  if [ "${CHOICES[firewall]}" = "yes" ]; then
+    echo ""
+    echo "🔒 Configuring UFW Firewall..."
+    configure_firewall
+  fi
+  if [ "${CHOICES[ssh_security]}" = "yes" ]; then
+    echo ""
+    echo "🔒 Configuring SSH Security..."
+    configure_ssh_security
+  fi
+  if [ "${CHOICES[fail2ban]}" = "yes" ]; then
+    echo ""
+    echo "🔒 Installing Fail2ban..."
+    install_fail2ban
+  fi
+  
+  # Development tools
+  if [ "${CHOICES[nvm]}" = "yes" ]; then
+    echo ""
+    echo "🛠️ Installing NVM (Node.js)..."
+    install_nvm
+  fi
+  if [ "${CHOICES[python]}" = "yes" ]; then
+    echo ""
+    echo "🛠️ Installing Python..."
+    install_python
+  fi
+  if [ "${CHOICES[uv]}" = "yes" ]; then
+    echo ""
+    echo "🛠️ Installing UV..."
+    install_uv
+  fi
+  
+  # Cloud and containers
+  if [ "${CHOICES[rclone]}" = "yes" ]; then
+    echo ""
+    echo "☁️ Installing Rclone..."
+    install_rclone
+  fi
+  if [ "${CHOICES[docker]}" = "yes" ]; then
+    echo ""
+    echo "☁️ Installing Docker..."
+    install_docker
+  fi
+  
+  # Proxy
+  if [ "${CHOICES[proxy]}" = "yes" ]; then
+    echo ""
+    echo "🌐 Installing Squid Proxy..."
+    install_proxy
+    change_proxy_port "31288"
+  fi
+  
+  # Shell improvements
+  if [ "${CHOICES[zsh]}" = "yes" ]; then
+    echo ""
+    echo "🐚 Installing Zsh..."
+    install_zsh
+  fi
+  if [ "${CHOICES[zimfw]}" = "yes" ]; then
+    echo ""
+    echo "🐚 Installing Zim framework..."
+    install_zimfw
+  fi
+  if [ "${CHOICES[zoxide]}" = "yes" ]; then
+    echo ""
+    echo "🐚 Installing Zoxide..."
+    install_zoxide
+  fi
+  if [ "${CHOICES[eza]}" = "yes" ]; then
+    echo ""
+    echo "🐚 Installing Eza..."
+    install_eza
+  fi
+  if [ "${CHOICES[fastfetch]}" = "yes" ]; then
+    echo ""
+    echo "🐚 Installing Fastfetch..."
+    install_fastfetch
+  fi
+  
+  # Additional tools
+  if [ "${CHOICES[qbittorrent]}" = "yes" ]; then
+    echo ""
+    echo "📱 Installing qBittorrent..."
+    install_qbittorrent
+  fi
+  if [ "${CHOICES[xrdp]}" = "yes" ]; then
+    echo ""
+    echo "📱 Installing XRDP..."
+    install_xrdp
+    change_xrdp_port 33899
+  fi
+  if [ "${CHOICES[firefox]}" = "yes" ]; then
+    echo ""
+    echo "📱 Installing Firefox..."
+    install_firefox
+  fi
+  
+  # Cleanup
+  echo ""
+  echo "🧹 Step 8/8: Final Cleanup"
+  cleanup
+  
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "✅ Interactive VPS setup completed!"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 }
-
 # --- Run Installs ---
 
 INSTALL_PERFORMED=false
@@ -1034,7 +1198,7 @@ fi
 
 # Nothing selected?
 if ! $INSTALL_NVM && ! $INSTALL_RCLONE && ! $INSTALL_DOCKER && ! $INSTALL_XRDP && ! $INSTALL_PROXY && ! $INSTALL_QBITTORRENT && ! $INSTALL_PYTHON && ! $INSTALL_ZSH && ! $INSTALL_ZIMFW && ! $UPDATE_APT && ! $INSTALL_VPS && ! $INSTALL_BASIC_TOOLS && ! $INSTALL_UV && ! $INSTALL_FIREFOX && ! $INSTALL_EZA && ! $INSTALL_ZOXIDE && ! $INSTALL_FASTFETCH && ! $SET_PASSWORD; then
-  echo "No installation performed. Use flags like: -vps -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -ssh-port=2222 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -apt-update"
+  echo "No installation performed. Use flags like: -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -ssh-port=2222 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -apt-update"
 fi
 
 

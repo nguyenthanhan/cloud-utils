@@ -1,0 +1,34 @@
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+backend = systemd
+
+# SSH protection with 1-day ban
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 86400
+findtime = 600
+
+# Recidive jail - bans repeat offenders for 30 days
+[recidive]
+enabled = true
+filter = recidive
+logpath = /var/log/fail2ban.log
+bantime = 2592000
+findtime = 604800
+maxretry = 2
+
+# OPTIONAL: GeoIP-based blocking (disabled by default)
+# Uncomment to enable blocking of specific countries
+# [geoip-block]
+# enabled = false
+# filter = geoip-block
+# action = geoip-action
+# logpath = /var/log/auth.log
+# maxretry = 1
+# bantime = -1
