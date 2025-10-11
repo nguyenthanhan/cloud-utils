@@ -555,6 +555,7 @@ install_proxy() {
   sudo bash squid3-install.sh -y
   # squid-add-user
   sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1heimer1 Slacked4-Corned-Depletion-Trembling
+  sudo systemctl reload squid
   rm -rf squid3-install.sh
   sudo apt install net-tools -y
   sudo netstat -lntp
@@ -566,13 +567,9 @@ change_proxy_port() {
   echo "Configuring proxy port to $new_port..."
   sudo sed -i "s/^http_port .*/http_port $new_port/" /etc/squid/squid.conf
   # sudo sed -i 's/http_port 3128/http_port 31288/g' /etc/squid/squid.conf;
-  # sudo systemctl restart squid
   sudo systemctl reload squid
   sudo netstat -lntp
   echo "✅ Proxy port configured to $new_port."
-  # change password
-  # sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1heimer1 Slacked4-Corned-Depletion-Trembling;
-  # sudo systemctl reload squid;
 }
 
 install_docker() {
