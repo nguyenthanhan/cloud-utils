@@ -554,7 +554,7 @@ install_proxy() {
   sudo wget https://raw.githubusercontent.com/serverok/squid-proxy-installer/master/squid3-install.sh
   sudo bash squid3-install.sh -y
   # squid-add-user
-  sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1 Slacked4-Corned-Depletion-Trembling
+  sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1heimer1 Slacked4-Corned-Depletion-Trembling
   rm -rf squid3-install.sh
   sudo apt install net-tools -y
   sudo netstat -lntp
