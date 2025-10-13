@@ -102,12 +102,6 @@ change_password() {
     echo "✅ Password changed successfully"
 }
 
-# Check if no parameters passed - run interactive VPS setup by default
-if [ $# -eq 0 ]; then
-    new_vps_setup
-    exit 0
-fi
-
 # Validate port numbers
 validate_port() {
     local port=$1
@@ -1058,6 +1052,13 @@ new_vps_setup() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 }
+
+# Check if no parameters passed - run interactive VPS setup by default
+if [ $# -eq 0 ]; then
+    new_vps_setup
+    exit 0
+fi
+
 # --- Run Installs ---
 
 INSTALL_PERFORMED=false
