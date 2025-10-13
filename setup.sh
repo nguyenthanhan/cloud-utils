@@ -24,7 +24,6 @@ declare -A FLAGS=(
   ["zsh"]=false
   ["zimfw"]=false
   ["apt-update"]=true
-  ["vps"]=false
   ["basic-tools"]=false
   ["uv"]=false
   ["firefox"]=false
@@ -538,7 +537,7 @@ install_proxy() {
   sudo wget https://raw.githubusercontent.com/serverok/squid-proxy-installer/master/squid3-install.sh
   sudo bash squid3-install.sh -y
   # squid-add-user
-  sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1heimer1 Slacked4-Corned-Depletion-Trembling
+  sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1heimer2 Drippy-Lark7-Broker-Handbag
   sudo systemctl reload squid
   rm -rf squid3-install.sh
   sudo apt install net-tools -y
@@ -1219,11 +1218,6 @@ if $INSTALL_FIREWALL; then
   INSTALL_PERFORMED=true
 fi
 
-if $INSTALL_VPS; then
-  new_vps_setup
-  INSTALL_PERFORMED=true
-fi
-
 # Perform cleanup if any installation was performed
 if $INSTALL_PERFORMED; then
   echo ""
@@ -1247,12 +1241,11 @@ if $INSTALL_PERFORMED; then
   $INSTALL_XRDP && echo "  • XRDP remote desktop"
   $INSTALL_FIREFOX && echo "  • Firefox browser"
   $INSTALL_FIREWALL && echo "  • UFW Firewall"
-  $INSTALL_VPS && echo "  • Complete VPS setup with security configurations"
   echo ""
 fi
 
 # Nothing selected?
-if ! $INSTALL_NVM && ! $INSTALL_RCLONE && ! $INSTALL_DOCKER && ! $INSTALL_XRDP && ! $INSTALL_PROXY && ! $INSTALL_QBITTORRENT && ! $INSTALL_PYTHON && ! $INSTALL_ZSH && ! $INSTALL_ZIMFW && ! $UPDATE_APT && ! $INSTALL_VPS && ! $INSTALL_BASIC_TOOLS && ! $INSTALL_UV && ! $INSTALL_FIREFOX && ! $INSTALL_EZA && ! $INSTALL_ZOXIDE && ! $INSTALL_FASTFETCH && ! $SET_PASSWORD && ! $INSTALL_FIREWALL; then
+if ! $INSTALL_NVM && ! $INSTALL_RCLONE && ! $INSTALL_DOCKER && ! $INSTALL_XRDP && ! $INSTALL_PROXY && ! $INSTALL_QBITTORRENT && ! $INSTALL_PYTHON && ! $INSTALL_ZSH && ! $INSTALL_ZIMFW && ! $UPDATE_APT && ! $INSTALL_BASIC_TOOLS && ! $INSTALL_UV && ! $INSTALL_FIREFOX && ! $INSTALL_EZA && ! $INSTALL_ZOXIDE && ! $INSTALL_FASTFETCH && ! $SET_PASSWORD && ! $INSTALL_FIREWALL; then
   echo "No installation performed. Use flags like: -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -firewall -apt-update"
 fi
 
