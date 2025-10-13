@@ -122,16 +122,6 @@ if [ "${VALUES[ssh-port]}" != "22" ]; then
     validate_port "${VALUES[ssh-port]}" "SSH"
 fi
 
-# Check internet connectivity
-check_internet() {
-  echo "Checking internet connectivity..."
-  if ! ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-    echo "❌ No internet connectivity detected. Please check your network connection."
-    exit 1
-  fi
-  echo "✅ Internet connectivity confirmed."
-}
-
 # Detect SSH service name
 get_ssh_service() {
   if systemctl list-unit-files | grep -q "^ssh.service"; then
@@ -144,33 +134,6 @@ get_ssh_service() {
 }
 
 SSH_SERVICE=$(get_ssh_service)
-
-check_internet
-
-# --- Error handling and rollback ---
-
-# Track installations for potential rollback
-declare -a INSTALLED_PACKAGES=()
-
-rollback_installations() {
-    echo "🔄 Rolling back installations due to error..."
-    for package in "${INSTALLED_PACKAGES[@]}"; do
-        echo "Removing $package..."
-        sudo apt-get remove --purge -y "$package" 2>/dev/null || true
-    done
-    sudo apt-get autoremove -y
-    echo "Rollback completed."
-}
-
-# Error handler
-error_handler() {
-    echo "❌ An error occurred during installation."
-    rollback_installations
-    exit 1
-}
-
-# Set error handler
-trap error_handler ERR
 
 # --- Installers ---
 
@@ -519,19 +482,6 @@ install_nvm() {
       exit 1
     fi
   fi
-}
-
-change_port() {
-  local new_port=$1
-  echo "Changing SSH port to $new_port..."
-  
-  # Update the SSH configuration file
-  sudo sed -i "s/^#Port .*/Port $new_port/" /etc/ssh/sshd_config
-  sudo sed -i "s/^Port .*/Port $new_port/" /etc/ssh/sshd_config
-  
-  # Restart the SSH service
-  sudo systemctl restart $SSH_SERVICE
-  echo "✅ SSH port changed to $new_port."
 }
 
 install_proxy() {
@@ -1161,11 +1111,6 @@ fi
 if $INSTALL_VPS; then
   new_vps_setup
   INSTALL_PERFORMED=true
-fi
-
-# Only change SSH port if it was explicitly set via command line argument
-if [ "${VALUES[ssh-port]}" != "22" ] && [ "${#VALUES[*]}" -gt 0 ]; then
-  change_port "${VALUES[ssh-port]}"
 fi
 
 # Perform cleanup if any installation was performed
