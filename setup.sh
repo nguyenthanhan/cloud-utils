@@ -307,7 +307,7 @@ install_zsh() {
   sudo apt update -y
 
   # Install zsh
-  sudo apt install -y zsh git
+  sudo apt install -y git zsh
 
   # Set zsh as default shell
   if [[ "$SHELL" != "$(which zsh)" ]]; then
@@ -407,19 +407,58 @@ install_eza() {
 install_fastfetch() {
   echo "Installing fastfetch (a fast system information tool)..."
 
-  # Detect Ubuntu version
-  local ubuntu_version
-  ubuntu_version=$(lsb_release -rs)
+  # Check if already installed
+  if command -v fastfetch >/dev/null 2>&1; then
+    echo "✅ fastfetch is already installed: $(fastfetch --version)"
+    return 0
+  fi
 
-  if [[ $(echo "$ubuntu_version < 24.10" | bc) -eq 1 ]]; then
-    # For Ubuntu 22.04 and earlier
-    sudo add-apt-repository ppa:zhangsongcui3371/fastfetch -y
+  # Try installing from PPA first (for Ubuntu 22.04 and earlier)
+  if sudo add-apt-repository ppa:zhangsongcui3371/fastfetch -y 2>/dev/null; then
     sudo apt update -y
-    sudo apt install -y fastfetch
+    if sudo apt install -y fastfetch 2>/dev/null; then
+      echo "✅ fastfetch installed from PPA"
+      return 0
+    fi
+  fi
+
+  # If PPA fails, install from GitHub releases
+  echo "Installing fastfetch from GitHub releases..."
+  
+  # Detect architecture
+  ARCH=$(uname -m)
+  case $ARCH in
+    x86_64)
+      FASTFETCH_ARCH="amd64"
+      ;;
+    aarch64|arm64)
+      FASTFETCH_ARCH="aarch64"
+      ;;
+    *)
+      echo "❌ Unsupported architecture: $ARCH"
+      return 1
+      ;;
+  esac
+
+  # Download and install latest release
+  FASTFETCH_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+  
+  if [ -z "$FASTFETCH_VERSION" ]; then
+    echo "❌ Failed to get fastfetch version"
+    return 1
+  fi
+
+  FASTFETCH_URL="https://github.com/fastfetch-cli/fastfetch/releases/download/${FASTFETCH_VERSION}/fastfetch-linux-${FASTFETCH_ARCH}.deb"
+  
+  wget -q "$FASTFETCH_URL" -O /tmp/fastfetch.deb
+  
+  if [ -f /tmp/fastfetch.deb ]; then
+    sudo dpkg -i /tmp/fastfetch.deb
+    sudo apt-get install -f -y  # Fix any dependency issues
+    rm /tmp/fastfetch.deb
   else
-    # For Ubuntu 24.10 and later
-    sudo apt update -y
-    sudo apt install -y fastfetch
+    echo "❌ Failed to download fastfetch"
+    return 1
   fi
 
   # Verify installation
@@ -427,6 +466,7 @@ install_fastfetch() {
     echo "✅ fastfetch installed successfully: $(fastfetch --version)"
   else
     echo "❌ fastfetch installation failed."
+    return 1
   fi
 }
 
@@ -444,8 +484,6 @@ install_uv() {
   echo "✅ uv installed successfully."
 }
 
-
-
 install_qbittorrent() {
   echo "Installing qBittorrent..."
   # install qbittorrent
@@ -458,7 +496,7 @@ install_qbittorrent() {
 install_rclone() {
   echo "Installing Rclone..."
   # Automatically provide password "1" for sudo
-  echo "1" | sudo -S -v
+  # echo "1" | sudo -S -v
   curl https://rclone.org/install.sh | sudo bash
   rclone config file
   echo "✅ Rclone installed successfully."
@@ -522,13 +560,27 @@ install_docker() {
   sudo sh get-docker.sh
   rm get-docker.sh
   sudo usermod -aG docker $USER
+  
   # Restart the Docker service
   sudo systemctl restart docker
+  
   # Check Docker version
   echo "Docker version: $(docker --version)"
-  echo "Docker group added to user $USER. Please log out and log back in for the changes to take effect."
+  
+  # Apply docker group to current session without logout
+  echo "Applying docker group permissions to current session..."
+  newgrp docker <<EONG
+  # Create docker network
+  if docker network ls | grep -q "my_network"; then
+    echo "✅ Docker network 'my_network' already exists"
+  else
+    docker network create my_network 2>/dev/null && echo "✅ Docker network 'my_network' created" || echo "⚠️  Failed to create network (not critical)"
+  fi
+EONG
+  
   echo "✅ Docker installed successfully."
-  docker network create my_network
+  echo "📝 Note: Docker group has been applied. You can use docker commands without sudo."
+  echo "   If you encounter permission issues, run: newgrp docker"
 }
 
 install_python() {
@@ -636,19 +688,56 @@ configure_ssh_security() {
 install_fail2ban() {
   echo "Installing and configuring Fail2ban with GeoIP blocking..."
   
+  # Update package list
+  sudo apt-get update -y
+  
+  # Install Fail2ban first
+  echo "Installing Fail2ban..."
+  sudo apt-get install -y fail2ban
+  
+  # Check if fail2ban was installed successfully
+  if ! command -v fail2ban-client >/dev/null 2>&1; then
+    echo "❌ Failed to install Fail2ban. Please check your package manager."
+    return 1
+  fi
+  
+  echo "✅ Fail2ban installed successfully"
+  
+  # Install GeoIP tools (try both old and new packages)
+  echo "Installing GeoIP tools..."
+  sudo apt-get install -y geoip-bin geoip-database 2>/dev/null || true
+  
+  # Try to install geoip-database-extra (may not be available on all Ubuntu versions)
+  if sudo apt-cache show geoip-database-extra >/dev/null 2>&1; then
+    sudo apt-get install -y geoip-database-extra
+    echo "✅ GeoIP database extra installed"
+  else
+    echo "⚠️  geoip-database-extra not available on this system, using basic GeoIP database"
+  fi
+  
   # Get the directory where this script is located
   SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
   CONFIG_DIR="$SCRIPT_DIR/fail2ban-configs"
   
   # Check if config files exist
   if [ ! -f "$CONFIG_DIR/fail2ban-jail.local" ]; then
-    echo "❌ Error: fail2ban-jail.local not found in $CONFIG_DIR"
-    echo "Please ensure fail2ban-configs folder exists with config files"
-    return 1
+    echo "⚠️  Warning: fail2ban-jail.local not found in $CONFIG_DIR"
+    echo "Using default Fail2ban configuration"
+    
+    # Enable and start with default config
+    sudo systemctl enable fail2ban
+    sudo systemctl start fail2ban
+    
+    if systemctl is-active --quiet fail2ban; then
+      echo "✅ Fail2ban installed and running with default configuration"
+      echo "📊 Active jails:"
+      sudo fail2ban-client status
+    else
+      echo "❌ Fail2ban failed to start"
+      return 1
+    fi
+    return 0
   fi
-  
-  # Install Fail2ban and GeoIP tools
-  sudo apt-get install -y fail2ban geoip-bin geoip-database geoip-database-extra
   
   # Backup existing jail.local if it exists
   if [ -f /etc/fail2ban/jail.local ]; then
@@ -660,32 +749,41 @@ install_fail2ban() {
   echo "Copying configuration files from fail2ban-configs/..."
   
   # Copy jail configuration
-  sudo cp "$CONFIG_DIR/fail2ban-jail.local" /etc/fail2ban/jail.local
-  echo "✅ Copied jail.local"
+  if sudo cp "$CONFIG_DIR/fail2ban-jail.local" /etc/fail2ban/jail.local 2>/dev/null; then
+    echo "✅ Copied jail.local"
+  else
+    echo "❌ Failed to copy jail.local"
+    return 1
+  fi
   
   # Copy filters
-  
   if [ -f "$CONFIG_DIR/fail2ban-geoip-block.conf" ]; then
-    sudo cp "$CONFIG_DIR/fail2ban-geoip-block.conf" /etc/fail2ban/filter.d/geoip-block.conf
-    echo "✅ Copied geoip-block.conf"
+    if sudo cp "$CONFIG_DIR/fail2ban-geoip-block.conf" /etc/fail2ban/filter.d/geoip-block.conf 2>/dev/null; then
+      echo "✅ Copied geoip-block.conf"
+    else
+      echo "⚠️  Failed to copy geoip-block.conf"
+    fi
   fi
   
   # Copy actions
   if [ -f "$CONFIG_DIR/fail2ban-geoip-action.conf" ]; then
-    sudo cp "$CONFIG_DIR/fail2ban-geoip-action.conf" /etc/fail2ban/action.d/geoip-action.conf
-    echo "✅ Copied geoip-action.conf"
+    if sudo cp "$CONFIG_DIR/fail2ban-geoip-action.conf" /etc/fail2ban/action.d/geoip-action.conf 2>/dev/null; then
+      echo "✅ Copied geoip-action.conf"
+    else
+      echo "⚠️  Failed to copy geoip-action.conf"
+    fi
   fi
   
   # Enable GeoIP blocking in jail.local
   echo "Enabling GeoIP blocking..."
-  sudo sed -i 's/^# \[geoip-block\]/[geoip-block]/' /etc/fail2ban/jail.local
-  sudo sed -i 's/^# enabled = false/enabled = true/' /etc/fail2ban/jail.local
-  sudo sed -i 's/^# filter = geoip-block/filter = geoip-block/' /etc/fail2ban/jail.local
-  sudo sed -i 's/^# action = geoip-action/action = geoip-action/' /etc/fail2ban/jail.local
-  sudo sed -i 's/^# logpath = \/var\/log\/auth.log/logpath = \/var\/log\/auth.log/' /etc/fail2ban/jail.local
-  sudo sed -i 's/^# maxretry = 1/maxretry = 1/' /etc/fail2ban/jail.local
-  sudo sed -i 's/^# bantime = -1/bantime = -1/' /etc/fail2ban/jail.local
-  echo "✅ GeoIP blocking enabled"
+  sudo sed -i 's/^# \[geoip-block\]/[geoip-block]/' /etc/fail2ban/jail.local 2>/dev/null || true
+  sudo sed -i 's/^# enabled = false/enabled = true/' /etc/fail2ban/jail.local 2>/dev/null || true
+  sudo sed -i 's/^# filter = geoip-block/filter = geoip-block/' /etc/fail2ban/jail.local 2>/dev/null || true
+  sudo sed -i 's/^# action = geoip-action/action = geoip-action/' /etc/fail2ban/jail.local 2>/dev/null || true
+  sudo sed -i 's/^# logpath = \/var\/log\/auth.log/logpath = \/var\/log\/auth.log/' /etc/fail2ban/jail.local 2>/dev/null || true
+  sudo sed -i 's/^# maxretry = 1/maxretry = 1/' /etc/fail2ban/jail.local 2>/dev/null || true
+  sudo sed -i 's/^# bantime = -1/bantime = -1/' /etc/fail2ban/jail.local 2>/dev/null || true
+  echo "✅ GeoIP blocking configuration applied"
   
   # Start and enable Fail2ban
   sudo systemctl enable fail2ban
@@ -702,10 +800,14 @@ install_fail2ban() {
     echo "📊 Active jails:"
     sudo fail2ban-client status
     echo ""
-    echo "🌍 GeoIP Tools Installed:"
-    echo "  • geoiplookup - Command line tool to query country by IP"
-    echo "  • Example: geoiplookup 8.8.8.8"
-    echo ""
+    
+    if command -v geoiplookup >/dev/null 2>&1; then
+      echo "🌍 GeoIP Tools Installed:"
+      echo "  • geoiplookup - Command line tool to query country by IP"
+      echo "  • Example: geoiplookup 8.8.8.8"
+      echo ""
+    fi
+    
     echo "🔒 Security Configuration:"
     echo "  • SSH: 3 attempts → 1 day ban"
     echo "  • GeoIP: Blocking CN, RU, KP (permanent ban)"
@@ -714,6 +816,7 @@ install_fail2ban() {
     echo "📁 Configuration loaded from: $CONFIG_DIR"
   else
     echo "❌ Fail2ban installation failed."
+    sudo journalctl -xeu fail2ban.service --no-pager -n 20
     return 1
   fi
 }
@@ -722,12 +825,17 @@ install_fail2ban() {
 
 ask_install() {
   local component="$1"
-  echo -e "\n❓ Install $component? (y/n): "
-  read -r response
-  case "$response" in
-    [yY][eE][sS]|[yY]) return 0 ;;
-    *) return 1 ;;
-  esac
+  local response
+  
+  while true; do
+    echo -e "\n❓ Install $component? (y/n): "
+    read -r response
+    case "$response" in
+      [yY][eE][sS]|[yY]) return 0 ;;
+      [nN][oO]|[nN]) return 1 ;;
+      *) echo "⚠️  Invalid input. Please enter 'y' for yes or 'n' for no." ;;
+    esac
+  done
 }
 
 new_vps_setup() {
