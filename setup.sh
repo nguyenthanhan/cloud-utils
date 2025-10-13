@@ -33,6 +33,7 @@ declare -A FLAGS=(
   ["fastfetch"]=false
   ["set-password"]=false
   ["verify-xrdp"]=false
+  ["firewall"]=false
 )
 
 declare -A VALUES=(
@@ -80,6 +81,7 @@ INSTALL_ZOXIDE=${FLAGS["zoxide"]}
 INSTALL_FASTFETCH=${FLAGS["fastfetch"]}
 SET_PASSWORD=${FLAGS["set-password"]}
 VERIFY_XRDP=${FLAGS["verify-xrdp"]}
+INSTALL_FIREWALL=${FLAGS["firewall"]}
 PROXY_PORT=${VALUES["proxy-port"]}
 SSH_PORT=${VALUES["ssh-port"]}
 
@@ -1219,6 +1221,12 @@ if $INSTALL_ZIMFW; then
   install_zimfw
   INSTALL_PERFORMED=true
 fi
+
+if $INSTALL_FIREWALL; then
+  configure_firewall
+  INSTALL_PERFORMED=true
+fi
+
 if $INSTALL_VPS; then
   new_vps_setup
   INSTALL_PERFORMED=true
@@ -1246,13 +1254,14 @@ if $INSTALL_PERFORMED; then
   $INSTALL_QBITTORRENT && echo "  • qBittorrent"
   $INSTALL_XRDP && echo "  • XRDP remote desktop"
   $INSTALL_FIREFOX && echo "  • Firefox browser"
+  $INSTALL_FIREWALL && echo "  • UFW Firewall"
   $INSTALL_VPS && echo "  • Complete VPS setup with security configurations"
   echo ""
 fi
 
 # Nothing selected?
-if ! $INSTALL_NVM && ! $INSTALL_RCLONE && ! $INSTALL_DOCKER && ! $INSTALL_XRDP && ! $INSTALL_PROXY && ! $INSTALL_QBITTORRENT && ! $INSTALL_PYTHON && ! $INSTALL_ZSH && ! $INSTALL_ZIMFW && ! $UPDATE_APT && ! $INSTALL_VPS && ! $INSTALL_BASIC_TOOLS && ! $INSTALL_UV && ! $INSTALL_FIREFOX && ! $INSTALL_EZA && ! $INSTALL_ZOXIDE && ! $INSTALL_FASTFETCH && ! $SET_PASSWORD; then
-  echo "No installation performed. Use flags like: -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -ssh-port=2222 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -apt-update"
+if ! $INSTALL_NVM && ! $INSTALL_RCLONE && ! $INSTALL_DOCKER && ! $INSTALL_XRDP && ! $INSTALL_PROXY && ! $INSTALL_QBITTORRENT && ! $INSTALL_PYTHON && ! $INSTALL_ZSH && ! $INSTALL_ZIMFW && ! $UPDATE_APT && ! $INSTALL_VPS && ! $INSTALL_BASIC_TOOLS && ! $INSTALL_UV && ! $INSTALL_FIREFOX && ! $INSTALL_EZA && ! $INSTALL_ZOXIDE && ! $INSTALL_FASTFETCH && ! $SET_PASSWORD && ! $INSTALL_FIREWALL; then
+  echo "No installation performed. Use flags like: -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -firewall -apt-update"
 fi
 
 
