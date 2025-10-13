@@ -775,16 +775,8 @@ install_fail2ban() {
     fi
   fi
   
-  # Enable GeoIP blocking in jail.local
-  echo "Enabling GeoIP blocking..."
-  sudo sed -i 's/^# \[geoip-block\]/[geoip-block]/' /etc/fail2ban/jail.local 2>/dev/null || true
-  sudo sed -i 's/^# enabled = false/enabled = true/' /etc/fail2ban/jail.local 2>/dev/null || true
-  sudo sed -i 's/^# filter = geoip-block/filter = geoip-block/' /etc/fail2ban/jail.local 2>/dev/null || true
-  sudo sed -i 's/^# action = geoip-action/action = geoip-action/' /etc/fail2ban/jail.local 2>/dev/null || true
-  sudo sed -i 's/^# logpath = \/var\/log\/auth.log/logpath = \/var\/log\/auth.log/' /etc/fail2ban/jail.local 2>/dev/null || true
-  sudo sed -i 's/^# maxretry = 1/maxretry = 1/' /etc/fail2ban/jail.local 2>/dev/null || true
-  sudo sed -i 's/^# bantime = -1/bantime = -1/' /etc/fail2ban/jail.local 2>/dev/null || true
-  echo "✅ GeoIP blocking configuration applied"
+  # GeoIP blocking is already enabled in the jail.local configuration file
+  echo "✅ GeoIP blocking configuration applied (enabled by default in jail.local)"
   
   # Start and enable Fail2ban
   sudo systemctl enable fail2ban
