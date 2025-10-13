@@ -709,8 +709,11 @@ install_fail2ban() {
   
   # Try to install geoip-database-extra (may not be available on all Ubuntu versions)
   if sudo apt-cache show geoip-database-extra >/dev/null 2>&1; then
-    sudo apt-get install -y geoip-database-extra
-    echo "✅ GeoIP database extra installed"
+    if sudo apt-get install -y geoip-database-extra 2>/dev/null; then
+      echo "✅ GeoIP database extra installed"
+    else
+      echo "⚠️  geoip-database-extra package found but failed to install, using basic GeoIP database"
+    fi
   else
     echo "⚠️  geoip-database-extra not available on this system, using basic GeoIP database"
   fi
