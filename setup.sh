@@ -540,7 +540,6 @@ install_proxy() {
   sudo systemctl reload squid
   rm -rf squid3-install.sh
   sudo apt install net-tools -y
-  sudo netstat -lntp
   echo "✅ Proxy installed successfully."
 }
 
@@ -828,8 +827,12 @@ ask_install() {
   local response
   
   while true; do
-    echo -e "\n❓ Install $component? (y/n): "
+    echo -e "\n❓ Install $component? (y/N): "
     read -r response
+    
+    # Default to 'n' if empty
+    response=${response:-n}
+    
     case "$response" in
       [yY][eE][sS]|[yY]) return 0 ;;
       [nN][oO]|[nN]) return 1 ;;
