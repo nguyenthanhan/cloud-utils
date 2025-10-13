@@ -27,8 +27,9 @@ maxretry = 2
 # Countries blocked: CN (China), RU (Russia), KP (North Korea)
 [geoip-block]
 enabled = true
+port = ssh
 filter = geoip-block
-action = geoip-action
+action = geoip-action[name=geoip-block, port=ssh, protocol=tcp]
 logpath = /var/log/auth.log
 maxretry = 1
 bantime = -1
