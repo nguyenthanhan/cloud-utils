@@ -10,7 +10,59 @@
 #
 # =============================================================================
 
+set -uo pipefail  # Exit on undefined vars, pipe failures (not -e for interactive mode)
+
 export DEBIAN_FRONTEND=noninteractive
+
+# =============================================================================
+# CONSTANTS AND CONFIGURATION
+# =============================================================================
+
+# Default ports
+readonly DEFAULT_PROXY_PORT="3128"
+readonly DEFAULT_SSH_PORT="22"
+readonly DEFAULT_XRDP_PORT="3389"
+
+# Proxy credentials (consider moving to .env file)
+readonly PROXY_USER="heimer1heimer2"
+readonly PROXY_PASS="Drippy-Lark7-Broker-Handbag"
+
+# Script directory
+readonly SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly CONFIG_DIR="$SCRIPT_DIR/fail2ban-configs"
+
+# =============================================================================
+# LOGGING AND ERROR HANDLING
+# =============================================================================
+
+log_info() {
+    echo "[INFO] $*"
+}
+
+log_success() {
+    echo "✅ $*"
+}
+
+log_error() {
+    echo "❌ $*" >&2
+}
+
+log_warning() {
+    echo "⚠️  $*"
+}
+
+# Error handler (disabled by default for interactive mode compatibility)
+# Uncomment the trap below if you want strict error handling
+# error_handler() {
+#     local line_num=$1
+#     log_error "Error occurred in script at line: $line_num"
+#     log_error "Last command exit code: $?"
+# }
+# trap 'error_handler ${LINENO}' ERR
+
+# =============================================================================
+# FLAG AND VALUE MANAGEMENT
+# =============================================================================
 
 # Define arrays for flags and their default values
 declare -A FLAGS=(
@@ -33,11 +85,14 @@ declare -A FLAGS=(
   ["set-password"]=false
   ["verify-xrdp"]=false
   ["firewall"]=false
+  ["ssh-security"]=false
+  ["fail2ban"]=false
 )
 
 declare -A VALUES=(
-  ["proxy-port"]="3128"
-  ["ssh-port"]="22"
+  ["proxy-port"]="$DEFAULT_PROXY_PORT"
+  ["ssh-port"]="$DEFAULT_SSH_PORT"
+  ["xrdp-port"]="$DEFAULT_XRDP_PORT"
 )
 
 # Parse args
@@ -84,23 +139,31 @@ INSTALL_FIREWALL=${FLAGS["firewall"]}
 PROXY_PORT=${VALUES["proxy-port"]}
 SSH_PORT=${VALUES["ssh-port"]}
 
+# =============================================================================
+# PREREQUISITE CHECKS
+# =============================================================================
+
 # Check if running as root or with sudo
 if [ "$EUID" -eq 0 ]; then
-    echo "❌ This script should not be run as root. Please run as a regular user with sudo privileges."
+    log_error "This script should not be run as root. Please run as a regular user with sudo privileges."
     exit 1
 fi
 
 # Check if sudo is available
 if ! command -v sudo >/dev/null 2>&1; then
-    echo "❌ sudo is not available. Please install sudo first."
+    log_error "sudo is not available. Please install sudo first."
     exit 1
 fi
 
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
 # Function to change user password to "1"
 change_password() {
-    echo "Changing user password ..."
+    log_info "Changing user password..."
     echo "$USER:1" | sudo chpasswd
-    echo "✅ Password changed successfully"
+    log_success "Password changed successfully"
 }
 
 # Validate port numbers
@@ -109,9 +172,10 @@ validate_port() {
     local name=$2
     
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-        echo "❌ Invalid $name port: $port. Must be between 1-65535"
-        exit 1
+        log_error "Invalid $name port: $port. Must be between 1-65535"
+        return 1
     fi
+    return 0
 }
 
 # Validate ports if provided
@@ -134,35 +198,36 @@ get_ssh_service() {
   fi
 }
 
-SSH_SERVICE=$(get_ssh_service)
+readonly SSH_SERVICE=$(get_ssh_service)
 
-# --- Installers ---
+# =============================================================================
+# INSTALLATION FUNCTIONS
+# =============================================================================
 
 update_apt() {
-  echo "Updating and upgrading apt packages..."
+  log_info "Updating and upgrading apt packages..."
   sudo apt-get -y update
   sudo apt update -y
   sudo apt-get -y upgrade
-  sudo apt-get -y dist-upgrade;
+  sudo apt-get -y dist-upgrade
   sudo apt --fix-broken install -y
   sudo apt-get -y autoremove
   sudo apt-get -y autoclean
-  echo "✅ System packages updated successfully."
+  log_success "System packages updated successfully."
 }
 
 install_firefox() {
-  echo "Installing Firefox browser..."
-  # install firefox
-  sudo apt-get -y install firefox ;
-  echo "✅ Firefox installed successfully."
+  log_info "Installing Firefox browser..."
+  sudo apt-get -y install firefox
+  log_success "Firefox installed successfully."
 }
 
 install_xrdp() {
-  echo "Installing XRDP (Remote Desktop)..."
+  log_info "Installing XRDP (Remote Desktop)..."
   
   # Check if XRDP is already installed
   if systemctl is-active --quiet xrdp; then
-    echo "✅ XRDP is already installed and running. Skipping..."
+    log_success "XRDP is already installed and running. Skipping..."
     return 0
   fi
   
@@ -180,9 +245,9 @@ install_xrdp() {
   
   # Verify installation
   if systemctl is-active --quiet xrdp; then
-    echo "✅ XRDP installed and started successfully."
+    log_success "XRDP installed and started successfully."
   else
-    echo "❌ XRDP installation failed."
+    log_error "XRDP installation failed."
     return 1
   fi
 }
@@ -191,16 +256,15 @@ change_xrdp_port() {
   local new_port=$1
   
   # Validate port number
-  if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
-    echo "❌ Invalid XRDP port: $new_port. Must be between 1-65535"
+  if ! validate_port "$new_port" "XRDP"; then
     return 1
   fi
   
-  echo "Changing XRDP port to $new_port..."
+  log_info "Changing XRDP port to $new_port..."
   
   # Check if XRDP is installed
   if ! systemctl is-active --quiet xrdp; then
-    echo "❌ XRDP is not installed or not running. Please install XRDP first."
+    log_error "XRDP is not installed or not running. Please install XRDP first."
     return 1
   fi
   
@@ -215,9 +279,9 @@ change_xrdp_port() {
   
   # Verify port change
   if grep -q "^port=$new_port" /etc/xrdp/xrdp.ini; then
-    echo "✅ XRDP port changed to $new_port successfully."
+    log_success "XRDP port changed to $new_port successfully."
   else
-    echo "❌ Failed to change XRDP port. Restoring backup..."
+    log_error "Failed to change XRDP port. Restoring backup..."
     sudo cp /etc/xrdp/xrdp.ini.backup /etc/xrdp/xrdp.ini
     sudo systemctl restart xrdp
     return 1
@@ -288,47 +352,42 @@ install_zsh() {
   # Check if zsh is already installed
   if command -v zsh >/dev/null 2>&1; then
     version=$(zsh --version)
-    echo "ℹ️ Zsh is already installed: $version"
+    log_info "Zsh is already installed: $version"
     
     # Check if zsh is default shell
     if [[ "$SHELL" == "$(which zsh)" ]]; then
-      echo "ℹ️ Zsh is already your default shell."
+      log_info "Zsh is already your default shell."
       return 0
     else
-      echo "Configuring zsh as default shell..."
+      log_info "Configuring zsh as default shell..."
       chsh -s $(which zsh)
-      echo "✅ Zsh set as default shell. Please log out and log back in for changes to take effect."
+      log_success "Zsh set as default shell. Please log out and log back in for changes to take effect."
       return 0
     fi
   fi
 
-  echo "Installing Zsh..."
-  # install zsh
-  # Update packages
+  log_info "Installing Zsh..."
   sudo apt update -y
-
-  # Install zsh
   sudo apt install -y git zsh
 
   # Set zsh as default shell
   if [[ "$SHELL" != "$(which zsh)" ]]; then
       chsh -s $(which zsh)
-      echo "✅ Zsh set as default shell. You may need to logout and login again."
-      # Restart Zsh shell
-      echo "Restarting Zsh shell..."
+      log_success "Zsh set as default shell. You may need to logout and login again."
+      log_info "Restarting Zsh shell..."
       exec zsh
   fi
 
-  $SHELL --version;
-  echo "✅ Zsh installed successfully."
+  $SHELL --version
+  log_success "Zsh installed successfully."
 }
 
 install_zimfw() {
-  echo "Installing zimfw (Zim Framework for Zsh)..."
+  log_info "Installing zimfw (Zim Framework for Zsh)..."
   
   # Check if zsh is installed
   if ! command -v zsh >/dev/null 2>&1; then
-    echo "Zsh is required for zimfw. Installing zsh first..."
+    log_info "Zsh is required for zimfw. Installing zsh first..."
     install_zsh
   fi
   
@@ -342,14 +401,15 @@ install_zimfw() {
 
   # Verify installation
   if [ -f "${ZDOTDIR:-${HOME}}/.zimrc" ]; then
-    echo "✅ zimfw installed successfully."
+    log_success "zimfw installed successfully."
   else
-    echo "❌ zimfw installation failed."
+    log_error "zimfw installation failed."
+    return 1
   fi
 }
 
 install_zoxide() {
-  echo "Installing zoxide (a smarter cd command)..."
+  log_info "Installing zoxide (a smarter cd command)..."
   
   # Install required dependencies
   sudo apt-get update -y
@@ -375,20 +435,19 @@ install_zoxide() {
     fi
   fi
   
-  sudo mv ~/.local/bin/zoxide /usr/local/bin/
+  sudo mv ~/.local/bin/zoxide /usr/local/bin/ 2>/dev/null || true
 
   # Verify installation
   if command -v zoxide >/dev/null 2>&1; then
-    echo "✅ zoxide installed successfully: $(zoxide --version)"
+    log_success "zoxide installed successfully: $(zoxide --version)"
   else
-    echo "❌ zoxide installation failed."
+    log_error "zoxide installation failed."
+    return 1
   fi
 }
 
 install_eza() {
-  echo "Installing eza (a replacement for ls)..."
-  # install eza
-  # eza is a replacement for ls
+  log_info "Installing eza (a replacement for ls)..."
   sudo apt update -y
   sudo apt install -y gpg
   sudo mkdir -p /etc/apt/keyrings
@@ -397,20 +456,22 @@ install_eza() {
   sudo chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
   sudo apt update -y
   sudo apt install -y eza
+  
   # Verify installation
   if command -v eza >/dev/null 2>&1; then
-    echo "✅ eza installed successfully: $(eza --version)"
+    log_success "eza installed successfully: $(eza --version)"
   else
-    echo "❌ eza installation failed."
+    log_error "eza installation failed."
+    return 1
   fi
 }
 
 install_fastfetch() {
-  echo "Installing fastfetch (a fast system information tool)..."
+  log_info "Installing fastfetch (a fast system information tool)..."
 
   # Check if already installed
   if command -v fastfetch >/dev/null 2>&1; then
-    echo "✅ fastfetch is already installed: $(fastfetch --version)"
+    log_success "fastfetch is already installed: $(fastfetch --version)"
     return 0
   fi
 
@@ -418,13 +479,13 @@ install_fastfetch() {
   if sudo add-apt-repository ppa:zhangsongcui3371/fastfetch -y 2>/dev/null; then
     sudo apt update -y
     if sudo apt install -y fastfetch 2>/dev/null; then
-      echo "✅ fastfetch installed from PPA"
+      log_success "fastfetch installed from PPA"
       return 0
     fi
   fi
 
   # If PPA fails, install from GitHub releases
-  echo "Installing fastfetch from GitHub releases..."
+  log_info "Installing fastfetch from GitHub releases..."
   
   # Detect architecture
   ARCH=$(uname -m)
@@ -436,7 +497,7 @@ install_fastfetch() {
       FASTFETCH_ARCH="aarch64"
       ;;
     *)
-      echo "❌ Unsupported architecture: $ARCH"
+      log_error "Unsupported architecture: $ARCH"
       return 1
       ;;
   esac
@@ -445,7 +506,7 @@ install_fastfetch() {
   FASTFETCH_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
   
   if [ -z "$FASTFETCH_VERSION" ]; then
-    echo "❌ Failed to get fastfetch version"
+    log_error "Failed to get fastfetch version"
     return 1
   fi
 
@@ -458,78 +519,75 @@ install_fastfetch() {
     sudo apt-get install -f -y  # Fix any dependency issues
     rm /tmp/fastfetch.deb
   else
-    echo "❌ Failed to download fastfetch"
+    log_error "Failed to download fastfetch"
     return 1
   fi
 
   # Verify installation
   if command -v fastfetch >/dev/null 2>&1; then
-    echo "✅ fastfetch installed successfully: $(fastfetch --version)"
+    log_success "fastfetch installed successfully: $(fastfetch --version)"
   else
-    echo "❌ fastfetch installation failed."
+    log_error "fastfetch installation failed."
     return 1
   fi
 }
 
 install_basic_tools() {
-  echo "Installing basic tools..."
+  log_info "Installing basic tools..."
   sudo apt-get -y update
-  sudo apt-get -y install uget wget build-essential git zip unzip 
-  sudo apt-get -y install net-tools curl bat tmux
-  echo "✅ Basic tools installed successfully."
+  sudo apt-get -y install git tmux
+  sudo apt-get -y install uget wget build-essential zip unzip net-tools curl bat htop
+  log_success "Basic tools installed successfully."
 }
 
 install_uv() {
-  echo "Installing uv..."
+  log_info "Installing uv..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  echo "✅ uv installed successfully."
+  log_success "uv installed successfully."
 }
 
 install_qbittorrent() {
-  echo "Installing qBittorrent..."
-  # install qbittorrent
-  sudo add-apt-repository ppa:qbittorrent-team/qbittorrent-stable -y;
-  sudo apt-get -y update ;
-  sudo apt-get -y install qbittorrent ;
-  echo "✅ qBittorrent installed successfully."
+  log_info "Installing qBittorrent..."
+  sudo add-apt-repository ppa:qbittorrent-team/qbittorrent-stable -y
+  sudo apt-get -y update
+  sudo apt-get -y install qbittorrent
+  log_success "qBittorrent installed successfully."
 }
 
 install_rclone() {
-  echo "Installing Rclone..."
-  # Automatically provide password "1" for sudo
-  # echo "1" | sudo -S -v
+  log_info "Installing Rclone..."
   curl https://rclone.org/install.sh | sudo bash
   rclone config file
-  echo "✅ Rclone installed successfully."
+  log_success "Rclone installed successfully."
 }
 
 install_nvm() {
   if [ -d "$HOME/.nvm" ]; then
-    echo "✅ NVM is already installed. Skipping..."
+    log_success "NVM is already installed. Skipping..."
+    return 0
+  fi
+  
+  log_info "Installing NVM..."
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
+  export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+  
+  if command -v nvm >/dev/null 2>&1; then
+    log_success "NVM installed successfully: $(nvm --version)"
+    nvm install --lts
   else
-    echo "Installing NVM..."
-    # install nvm
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash;
-    export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm;
-    # success
-    if command -v nvm >/dev/null 2>&1; then
-      echo "✅ NVM installed successfully: $(nvm --version)"
-      nvm install --lts
-    else
-      echo "❌ NVM installation failed."
-      exit 1
-    fi
+    log_error "NVM installation failed."
+    return 1
   fi
 }
 
 install_proxy() {
-  echo "Installing Proxy..."
+  log_info "Installing Proxy..."
   
   # Check if Squid proxy is already installed
-  if sudo netstat -lntp | grep squid; then
-    echo "✅ Proxy is already installed. Skipping..."
-    return
+  if sudo netstat -lntp 2>/dev/null | grep -q squid; then
+    log_success "Proxy is already installed. Skipping..."
+    return 0
   fi
 
   sudo apt-get -y update
@@ -537,25 +595,29 @@ install_proxy() {
   sudo wget https://raw.githubusercontent.com/serverok/squid-proxy-installer/master/squid3-install.sh
   sudo bash squid3-install.sh -y
   # squid-add-user
-  sudo /usr/bin/htpasswd -b -c /etc/squid/passwd heimer1heimer2 Drippy-Lark7-Broker-Handbag
+  sudo /usr/bin/htpasswd -b -c /etc/squid/passwd "$PROXY_USER" "$PROXY_PASS"
   sudo systemctl reload squid
   rm -rf squid3-install.sh
   sudo apt install net-tools -y
-  echo "✅ Proxy installed successfully."
+  log_success "Proxy installed successfully."
 }
 
 change_proxy_port() {
   local new_port=$1
-  echo "Configuring proxy port to $new_port..."
+  
+  if ! validate_port "$new_port" "Proxy"; then
+    return 1
+  fi
+  
+  log_info "Configuring proxy port to $new_port..."
   sudo sed -i "s/^http_port .*/http_port $new_port/" /etc/squid/squid.conf
-  # sudo sed -i 's/http_port 3128/http_port 31288/g' /etc/squid/squid.conf;
   sudo systemctl reload squid
-  sudo netstat -lntp
-  echo "✅ Proxy port configured to $new_port."
+  sudo netstat -lntp 2>/dev/null || true
+  log_success "Proxy port configured to $new_port."
 }
 
 install_docker() {
-  echo "Installing Docker..."
+  log_info "Installing Docker..."
   curl -fsSL https://get.docker.com -o get-docker.sh
   sudo sh get-docker.sh
   rm get-docker.sh
@@ -565,10 +627,10 @@ install_docker() {
   sudo systemctl restart docker
   
   # Check Docker version
-  echo "Docker version: $(docker --version)"
+  log_info "Docker version: $(docker --version)"
   
   # Apply docker group to current session without logout
-  echo "Applying docker group permissions to current session..."
+  log_info "Applying docker group permissions to current session..."
   newgrp docker <<EONG
   # Create docker network
   if docker network ls | grep -q "my_network"; then
@@ -578,31 +640,25 @@ install_docker() {
   fi
 EONG
   
-  echo "✅ Docker installed successfully."
-  echo "📝 Note: Docker group has been applied. You can use docker commands without sudo."
-  echo "   If you encounter permission issues, run: newgrp docker"
+  log_success "Docker installed successfully."
+  log_info "Note: Docker group has been applied. You can use docker commands without sudo."
+  log_info "If you encounter permission issues, run: newgrp docker"
 }
 
 install_python() {
-  echo "Installing Python..."
+  log_info "Installing Python..."
   sudo apt-get -y update
   sudo apt-get -y install python3 python3-pip
 
   # config python
-  sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1;
-  sudo update-alternatives --config python;
-  python -V;
-  # install pipenv
-  # sudo pip install --user pipenv;
-  # echo 'PYTHON_BIN_PATH="$(python3 -m site --user-base)/bin"' >> ~/.bashrc;
-  # echo 'PATH="$PATH:$PYTHON_BIN_PATH"' >> ~/.bashrc;
-  # echo 'export PIPENV_VENV_IN_PROJECT=1' >> ~/.bashrc;
-  # source ~/.bashrc;
-  echo "✅ Python installed successfully."
+  sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+  sudo update-alternatives --config python
+  python -V
+  log_success "Python installed successfully."
 }
 
 cleanup() {
-  echo "Performing cleanup tasks..."
+  log_info "Performing cleanup tasks..."
 
   # Update and upgrade system
   sudo apt update -y
@@ -615,11 +671,11 @@ cleanup() {
   sudo apt-get autoremove -y
   sudo apt-get autoclean
   sudo apt-get clean
-  echo "✅ Cleanup completed successfully."
+  log_success "Cleanup completed successfully."
 }
 
 configure_firewall() {
-  echo "Configuring firewall (UFW)..."
+  log_info "Configuring firewall (UFW)..."
   
   # Install UFW if not already installed
   sudo apt-get install -y ufw
@@ -629,16 +685,16 @@ configure_firewall() {
    sudo ufw default allow outgoing
   
   # Enable firewall
-  sudo ufw enable
+  sudo ufw --force enable
   
-  echo "✅ Firewall configured successfully (all incoming traffic allowed)."
+  log_success "Firewall configured successfully (all incoming traffic allowed)."
 }
 
 configure_ssh_security() {
-  echo "Configuring SSH security..."
+  log_info "Configuring SSH security..."
 
   # Backup original SSH config
-  sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+  sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.$(date +%Y%m%d_%H%M%S)
   
   # Configure SSH security settings
   # Disable root login
@@ -658,30 +714,30 @@ configure_ssh_security() {
   # Restart SSH service
   sudo systemctl restart $SSH_SERVICE
   
-  echo "✅ SSH security configured successfully."
-  echo "⚠️  Password authentication is now DISABLED - SSH keys required!"
+  log_success "SSH security configured successfully."
+  log_warning "Password authentication is now DISABLED - SSH keys required!"
 }
 
 install_fail2ban() {
-  echo "Installing and configuring Fail2ban with GeoIP blocking..."
+  log_info "Installing and configuring Fail2ban with GeoIP blocking..."
   
   # Update package list
   sudo apt-get update -y
   
   # Install Fail2ban first
-  echo "Installing Fail2ban..."
+  log_info "Installing Fail2ban..."
   sudo apt-get install -y fail2ban
   
   # Check if fail2ban was installed successfully
   if ! command -v fail2ban-client >/dev/null 2>&1; then
-    echo "❌ Failed to install Fail2ban. Please check your package manager."
+    log_error "Failed to install Fail2ban. Please check your package manager."
     return 1
   fi
   
-  echo "✅ Fail2ban installed successfully"
+  log_success "Fail2ban installed successfully"
   
   # Install GeoIP2 tools (modern replacement for deprecated GeoIP Legacy)
-  echo "Installing GeoIP2 tools and database..."
+  log_info "Installing GeoIP2 tools and database..."
   
   # Install mmdb-bin for GeoIP2 lookups (replacement for geoiplookup)
   sudo apt-get install -y mmdb-bin 2>/dev/null || true
@@ -690,7 +746,7 @@ install_fail2ban() {
   sudo apt-get install -y geoipupdate 2>/dev/null || true
   
   # Download GeoLite2 Country database (free version)
-  echo "Downloading GeoLite2 Country database..."
+  log_info "Downloading GeoLite2 Country database..."
   sudo mkdir -p /usr/share/GeoIP
   
   # Download latest GeoLite2-Country database
@@ -709,36 +765,32 @@ install_fail2ban() {
   
   # Verify GeoIP2 database
   if [ -f /usr/share/GeoIP/GeoLite2-Country.mmdb ]; then
-    echo "✅ GeoIP2 database installed successfully"
+    log_success "GeoIP2 database installed successfully"
     
     # Test mmdblookup if available
     if command -v mmdblookup >/dev/null 2>&1; then
-      echo "✅ GeoIP2 lookup tool (mmdblookup) available"
+      log_success "GeoIP2 lookup tool (mmdblookup) available"
     fi
   else
-    echo "⚠️  GeoIP2 database download failed, GeoIP blocking may not work"
-    echo "    You can manually download from: https://github.com/P3TERX/GeoLite.mmdb"
+    log_warning "GeoIP2 database download failed, GeoIP blocking may not work"
+    log_info "You can manually download from: https://github.com/P3TERX/GeoLite.mmdb"
   fi
-  
-  # Get the directory where this script is located
-  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-  CONFIG_DIR="$SCRIPT_DIR/fail2ban-configs"
   
   # Check if config files exist
   if [ ! -f "$CONFIG_DIR/fail2ban-jail.local" ]; then
-    echo "⚠️  Warning: fail2ban-jail.local not found in $CONFIG_DIR"
-    echo "Using default Fail2ban configuration"
+    log_warning "Warning: fail2ban-jail.local not found in $CONFIG_DIR"
+    log_info "Using default Fail2ban configuration"
     
     # Enable and start with default config
     sudo systemctl enable fail2ban
     sudo systemctl start fail2ban
     
     if systemctl is-active --quiet fail2ban; then
-      echo "✅ Fail2ban installed and running with default configuration"
+      log_success "Fail2ban installed and running with default configuration"
       echo "📊 Active jails:"
       sudo fail2ban-client status
     else
-      echo "❌ Fail2ban failed to start"
+      log_error "Fail2ban failed to start"
       return 1
     fi
     return 0
@@ -747,40 +799,40 @@ install_fail2ban() {
   # Backup existing jail.local if it exists
   if [ -f /etc/fail2ban/jail.local ]; then
     sudo cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.backup.$(date +%Y%m%d_%H%M%S)
-    echo "✅ Existing jail.local backed up"
+    log_success "Existing jail.local backed up"
   fi
   
   # Copy configuration files
-  echo "Copying configuration files from fail2ban-configs/..."
+  log_info "Copying configuration files from fail2ban-configs/..."
   
   # Copy jail configuration
   if sudo cp "$CONFIG_DIR/fail2ban-jail.local" /etc/fail2ban/jail.local 2>/dev/null; then
-    echo "✅ Copied jail.local"
+    log_success "Copied jail.local"
   else
-    echo "❌ Failed to copy jail.local"
+    log_error "Failed to copy jail.local"
     return 1
   fi
   
   # Copy filters
   if [ -f "$CONFIG_DIR/fail2ban-geoip-block.conf" ]; then
     if sudo cp "$CONFIG_DIR/fail2ban-geoip-block.conf" /etc/fail2ban/filter.d/geoip-block.conf 2>/dev/null; then
-      echo "✅ Copied geoip-block.conf"
+      log_success "Copied geoip-block.conf"
     else
-      echo "⚠️  Failed to copy geoip-block.conf"
+      log_warning "Failed to copy geoip-block.conf"
     fi
   fi
   
   # Copy actions
   if [ -f "$CONFIG_DIR/fail2ban-geoip-action.conf" ]; then
     if sudo cp "$CONFIG_DIR/fail2ban-geoip-action.conf" /etc/fail2ban/action.d/geoip-action.conf 2>/dev/null; then
-      echo "✅ Copied geoip-action.conf"
+      log_success "Copied geoip-action.conf"
     else
-      echo "⚠️  Failed to copy geoip-action.conf"
+      log_warning "Failed to copy geoip-action.conf"
     fi
   fi
   
   # GeoIP blocking is already enabled in the jail.local configuration file
-  echo "✅ GeoIP blocking configuration applied (enabled by default in jail.local)"
+  log_success "GeoIP blocking configuration applied (enabled by default in jail.local)"
   
   # Start and enable Fail2ban
   sudo systemctl enable fail2ban
@@ -792,7 +844,7 @@ install_fail2ban() {
   # Verify installation
   if systemctl is-active --quiet fail2ban; then
     echo ""
-    echo "✅ Fail2ban installed and configured successfully with GeoIP2 support."
+    log_success "Fail2ban installed and configured successfully with GeoIP2 support."
     echo ""
     echo "📊 Active jails:"
     sudo fail2ban-client status
@@ -818,7 +870,7 @@ install_fail2ban() {
     echo ""
     echo "📁 Configuration loaded from: $CONFIG_DIR"
   else
-    echo "❌ Fail2ban installation failed."
+    log_error "Fail2ban installation failed."
     sudo journalctl -xeu fail2ban.service --no-pager -n 20
     return 1
   fi
@@ -1124,140 +1176,130 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# --- Run Installs ---
+# =============================================================================
+# COMPONENT REGISTRY - Maps flags to installer functions
+# =============================================================================
 
-INSTALL_PERFORMED=false
+declare -A COMPONENT_REGISTRY=(
+  ["apt-update"]="update_apt"
+  ["basic-tools"]="install_basic_tools"
+  ["set-password"]="change_password"
+  ["firewall"]="configure_firewall"
+  ["ssh-security"]="configure_ssh_security"
+  ["fail2ban"]="install_fail2ban"
+  ["nvm"]="install_nvm"
+  ["python"]="install_python"
+  ["uv"]="install_uv"
+  ["rclone"]="install_rclone"
+  ["docker"]="install_docker"
+  ["proxy"]="install_proxy"
+  ["zsh"]="install_zsh"
+  ["zimfw"]="install_zimfw"
+  ["zoxide"]="install_zoxide"
+  ["eza"]="install_eza"
+  ["fastfetch"]="install_fastfetch"
+  ["qbittorrent"]="install_qbittorrent"
+  ["xrdp"]="install_xrdp"
+  ["firefox"]="install_firefox"
+  ["verify-xrdp"]="verify_xrdp_setup"
+)
 
-if $UPDATE_APT; then
-  update_apt
-  INSTALL_PERFORMED=true
-fi
+declare -A COMPONENT_DESCRIPTIONS=(
+  ["apt-update"]="System updates"
+  ["basic-tools"]="Basic tools (git, tmux, wget, curl, etc.)"
+  ["set-password"]="Password change"
+  ["firewall"]="UFW Firewall"
+  ["ssh-security"]="SSH Security (key-only)"
+  ["fail2ban"]="Fail2ban intrusion prevention"
+  ["nvm"]="Node.js (NVM)"
+  ["python"]="Python"
+  ["uv"]="UV Python package manager"
+  ["rclone"]="Rclone cloud storage sync"
+  ["docker"]="Docker"
+  ["proxy"]="Squid proxy server"
+  ["zsh"]="Zsh shell"
+  ["zimfw"]="Zim framework"
+  ["zoxide"]="Zoxide (smart cd)"
+  ["eza"]="Eza (ls replacement)"
+  ["fastfetch"]="Fastfetch system info"
+  ["qbittorrent"]="qBittorrent"
+  ["xrdp"]="XRDP remote desktop"
+  ["firefox"]="Firefox browser"
+  ["verify-xrdp"]="XRDP verification"
+)
 
+# =============================================================================
+# UNIFIED INSTALLATION RUNNER
+# =============================================================================
 
-
-if $INSTALL_NVM; then
-  install_nvm
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_BASIC_TOOLS; then
-  install_basic_tools
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_UV; then
-  install_uv
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_FIREFOX; then
-  install_firefox
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_EZA; then
-  install_eza
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_ZOXIDE; then
-  install_zoxide
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_FASTFETCH; then
-  install_fastfetch
-  INSTALL_PERFORMED=true
-fi
-
-if $SET_PASSWORD; then
-  change_password
-  INSTALL_PERFORMED=true
-fi
-
-if $VERIFY_XRDP; then
-  verify_xrdp_setup
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_RCLONE; then
-  install_rclone
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_DOCKER; then
-  install_docker
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_XRDP; then
-  install_xrdp
-  change_xrdp_port 33899
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_PROXY; then
-  install_proxy
-  if [ -n "$PROXY_PORT" ]; then
-    change_proxy_port "$PROXY_PORT"
+run_installations() {
+  local install_performed=false
+  local -a installed_components=()
+  
+  # Run installations in order
+  for component in apt-update basic-tools set-password firewall ssh-security fail2ban \
+                   nvm python uv rclone docker proxy zsh zimfw zoxide eza fastfetch \
+                   qbittorrent xrdp firefox verify-xrdp; do
+    
+    if [ "${FLAGS[$component]}" = "true" ]; then
+      local func="${COMPONENT_REGISTRY[$component]}"
+      
+      if [ -n "$func" ]; then
+        log_info "Running: $component"
+        
+        # Execute the installer function
+        if $func; then
+          installed_components+=("${COMPONENT_DESCRIPTIONS[$component]}")
+          install_performed=true
+        else
+          log_warning "Failed to install: $component (continuing...)"
+        fi
+        
+        # Handle post-installation configuration
+        case "$component" in
+          xrdp)
+            if [ "${VALUES[xrdp-port]}" != "$DEFAULT_XRDP_PORT" ]; then
+              change_xrdp_port "${VALUES[xrdp-port]}"
+            else
+              change_xrdp_port 33899
+            fi
+            ;;
+          proxy)
+            if [ "${VALUES[proxy-port]}" != "$DEFAULT_PROXY_PORT" ]; then
+              change_proxy_port "${VALUES[proxy-port]}"
+            fi
+            ;;
+        esac
+      fi
+    fi
+  done
+  
+  # Perform cleanup if any installation was performed
+  if [ "$install_performed" = true ]; then
+    echo ""
+    cleanup
+    echo ""
+    echo "🎉 Installation completed successfully!"
+    echo "📋 Summary of what was installed:"
+    for component in "${installed_components[@]}"; do
+      echo "  • $component"
+    done
+    echo ""
+  else
+    log_info "No installation performed."
+    echo ""
+    echo "Available flags:"
+    echo "  -nvm -python -uv -docker -rclone -proxy [-proxy-port=PORT]"
+    echo "  -zsh -zimfw -zoxide -eza -fastfetch"
+    echo "  -xrdp [-xrdp-port=PORT] -firefox -qbittorrent"
+    echo "  -firewall -ssh-security -fail2ban"
+    echo "  -basic-tools -apt-update -set-password -verify-xrdp"
+    echo ""
+    echo "Example: ./setup.sh -docker -python -zsh -firewall"
   fi
-  INSTALL_PERFORMED=true
-fi
+}
 
-if $INSTALL_QBITTORRENT; then
-  install_qbittorrent
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_PYTHON; then
-  install_python
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_ZSH; then
-  install_zsh
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_ZIMFW; then
-  install_zimfw
-  INSTALL_PERFORMED=true
-fi
-
-if $INSTALL_FIREWALL; then
-  configure_firewall
-  INSTALL_PERFORMED=true
-fi
-
-# Perform cleanup if any installation was performed
-if $INSTALL_PERFORMED; then
-  echo ""
-  cleanup
-  echo ""
-  echo "🎉 Installation completed successfully!"
-  echo "📋 Summary of what was installed:"
-  $INSTALL_BASIC_TOOLS && echo "  • Basic tools (uget, wget, build-essential, git, zip, unzip, net-tools, curl, bat, tmux)"
-  $INSTALL_NVM && echo "  • Node.js (NVM)"
-  $INSTALL_PYTHON && echo "  • Python"
-  $INSTALL_UV && echo "  • UV Python package manager"
-  $INSTALL_DOCKER && echo "  • Docker"
-  $INSTALL_RCLONE && echo "  • Rclone"
-  $INSTALL_PROXY && echo "  • Squid proxy server"
-  $INSTALL_ZSH && echo "  • Zsh shell"
-  $INSTALL_ZIMFW && echo "  • Zim framework"
-  $INSTALL_ZOXIDE && echo "  • Zoxide"
-  $INSTALL_EZA && echo "  • Eza (ls replacement)"
-  $INSTALL_FASTFETCH && echo "  • Fastfetch"
-  $INSTALL_QBITTORRENT && echo "  • qBittorrent"
-  $INSTALL_XRDP && echo "  • XRDP remote desktop"
-  $INSTALL_FIREFOX && echo "  • Firefox browser"
-  $INSTALL_FIREWALL && echo "  • UFW Firewall"
-  echo ""
-fi
-
-# Nothing selected?
-if ! $INSTALL_NVM && ! $INSTALL_RCLONE && ! $INSTALL_DOCKER && ! $INSTALL_XRDP && ! $INSTALL_PROXY && ! $INSTALL_QBITTORRENT && ! $INSTALL_PYTHON && ! $INSTALL_ZSH && ! $INSTALL_ZIMFW && ! $UPDATE_APT && ! $INSTALL_BASIC_TOOLS && ! $INSTALL_UV && ! $INSTALL_FIREFOX && ! $INSTALL_EZA && ! $INSTALL_ZOXIDE && ! $INSTALL_FASTFETCH && ! $SET_PASSWORD && ! $INSTALL_FIREWALL; then
-  echo "No installation performed. Use flags like: -nvm -rclone -docker -xrdp -proxy -proxy-port=8080 -basic-tools -uv -firefox -eza -zoxide -fastfetch -qbittorrent -python -zsh -zimfw -set-password -firewall -apt-update"
-fi
+# --- Run Installs ---
+run_installations
 
 
