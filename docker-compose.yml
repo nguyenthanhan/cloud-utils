@@ -5,36 +5,28 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "5432:5432"  # PostgreSQL
-      - "6379:6379"  # Redis
-      - "27017:27017" # MongoDB
     command:
       # API Dashboard
       - --api.dashboard=true
       - --api.insecure=false
-      
+
       # Docker Provider
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=${TRAEFIK_NETWORK}
-      
+
       # Entry Points - HTTP/HTTPS
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      
-      # Entry Points - Database TCP
-      - --entrypoints.postgres-tcp.address=:5432
-      - --entrypoints.redis-tcp.address=:6379
-      - --entrypoints.mongodb-tcp.address=:27017
-      
+
       # SSL/TLS Configuration
       - --entrypoints.websecure.http.tls=true
       - --entrypoints.websecure.http.tls.certresolver=cloudflare
       - --entrypoints.websecure.http.tls.domains[0].main=${TRAEFIK_DOMAIN}
       - --entrypoints.websecure.http.tls.domains[0].sans=*.${TRAEFIK_DOMAIN}
-      
+
       # ACME / Let's Encrypt with Cloudflare DNS Challenge
       - --certificatesresolvers.cloudflare.acme.email=${TRAEFIK_EMAIL}
       - --certificatesresolvers.cloudflare.acme.storage=acme.json
@@ -42,7 +34,7 @@ services:
       - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
       - --certificatesresolvers.cloudflare.acme.dnschallenge.delaybeforecheck=10
       - --certificatesresolvers.cloudflare.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
-      
+
       # Logging
       - --log.level=${TRAEFIK_LOG_LEVEL}
       - --accesslog=true
@@ -106,7 +98,8 @@ services:
       - "traefik.http.routers.pdf.tls.certresolver=cloudflare"
       - "traefik.http.services.pdf.loadbalancer.server.port=8080"
 
-  # PostgreSQL 16 - TCP routing through Traefik
+  # Connect: ssh -L 5432:localhost:5432 user@host
+  # Then: psql -h localhost -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}
   postgres:
     image: ${POSTGRES_IMAGE}
     container_name: postgres
@@ -117,6 +110,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
@@ -124,14 +119,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    labels:
-      - "traefik.enable=true"
-      - "traefik.tcp.routers.postgres.rule=HostSNI(`*`)"
-      - "traefik.tcp.routers.postgres.entrypoints=postgres-tcp"
-      - "traefik.tcp.routers.postgres.service=postgres"
-      - "traefik.tcp.services.postgres.loadbalancer.server.port=5432"
 
-  # MongoDB 8 - TCP routing through Traefik
+  # Connect: ssh -L 27017:localhost:27017 user@host
+  # Then: mongosh "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017"
   mongodb:
     image: ${MONGODB_IMAGE}
     container_name: mongodb
@@ -143,6 +133,8 @@ services:
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
+    ports:
+      - "127.0.0.1:27017:27017" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
@@ -150,14 +142,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    labels:
-      - "traefik.enable=true"
-      - "traefik.tcp.routers.mongodb.rule=HostSNI(`*`)"
-      - "traefik.tcp.routers.mongodb.entrypoints=mongodb-tcp"
-      - "traefik.tcp.routers.mongodb.service=mongodb"
-      - "traefik.tcp.services.mongodb.loadbalancer.server.port=27017"
 
-  # Redis 7 - TCP routing through Traefik
+  # Connect: ssh -L 6379:localhost:6379 user@host
+  # Then: redis-cli -h localhost -p 6379 -a ${REDIS_PASSWORD}
   redis:
     image: ${REDIS_IMAGE}
     container_name: redis
@@ -165,6 +152,8 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
@@ -172,12 +161,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    labels:
-      - "traefik.enable=true"
-      - "traefik.tcp.routers.redis.rule=HostSNI(`*`)"
-      - "traefik.tcp.routers.redis.entrypoints=redis-tcp"
-      - "traefik.tcp.routers.redis.service=redis"
-      - "traefik.tcp.services.redis.loadbalancer.server.port=6379"
 
 volumes:
   portainer_data:
