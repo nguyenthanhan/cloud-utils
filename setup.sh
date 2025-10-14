@@ -634,32 +634,9 @@ configure_firewall() {
   echo "✅ Firewall configured successfully (all incoming traffic allowed)."
 }
 
-check_ssh_keys() {
-  echo "Checking SSH key configuration..."
-  
-  # Check if SSH keys exist
-  if [ ! -f ~/.ssh/id_rsa ] && [ ! -f ~/.ssh/id_ed25519 ]; then
-    echo "⚠️  WARNING: No SSH keys found!"
-    echo "   This script will disable password authentication."
-    echo "   You may be locked out of your VPS!"
-    echo ""
-    read -p "Do you want to continue? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-      echo "Setup cancelled. Please configure SSH keys first."
-      exit 1
-    fi
-  else
-    echo "✅ SSH keys found."
-  fi
-}
-
 configure_ssh_security() {
   echo "Configuring SSH security..."
-  
-  # Check SSH keys before proceeding
-  check_ssh_keys
-  
+
   # Backup original SSH config
   sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
   
