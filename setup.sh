@@ -334,7 +334,7 @@ install_zimfw() {
   
   # Install zimfw
   curl -fsSL https://raw.githubusercontent.com/zimfw/install/master/install.zsh | zsh
-  
+
   # Ensure skip_global_compinit=1 is added to ~/.zshenv
   if ! grep -q "skip_global_compinit=1" ~/.zshenv 2>/dev/null; then
     echo "skip_global_compinit=1" >> ~/.zshenv
@@ -356,8 +356,8 @@ install_zoxide() {
   sudo apt-get install -y curl
 
   # Install zoxide using the official installation script
-  curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | zsh
-  
+  curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+
   # Add zoxide initialization to shell configuration
   if [[ -f "$HOME/.zshrc" ]]; then
     # Check if zoxide init is already in .zshrc
