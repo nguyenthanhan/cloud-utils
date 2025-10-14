@@ -53,7 +53,7 @@ The script will ask which components you want, then install everything automatic
 ### Security
 - UFW Firewall (allows all incoming - managed at cloud level)
 - SSH hardening (key-only auth, no root login)
-- Fail2ban with GeoIP blocking (blocks CN, RU, KP)
+- Fail2ban with GeoIP2 blocking (blocks CN, RU, KP using GeoLite2 database)
 
 ### Development
 - Node.js (via NVM)
@@ -93,7 +93,7 @@ sudo fail2ban-client status sshd
 |------|---------|----------|
 | SSH | 3 attempts | 1 day |
 | Recidive | 2 bans in 7 days | 30 days |
-| GeoIP | CN/RU/KP | Permanent |
+| GeoIP2 | CN/RU/KP | Permanent |
 
 ### Edit Configuration
 ```bash
@@ -105,6 +105,16 @@ sudo systemctl restart fail2ban
 ### Unban IP
 ```bash
 sudo fail2ban-client set sshd unbanip IP_ADDRESS
+```
+
+### Test GeoIP2 Lookup
+```bash
+# Test with GeoIP2 (modern)
+mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 8.8.8.8 country iso_code
+
+# Test with specific IPs
+mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 1.1.1.1 country iso_code  # US
+mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 114.114.114.114 country iso_code  # CN
 ```
 
 ---

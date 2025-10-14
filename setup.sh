@@ -680,19 +680,44 @@ install_fail2ban() {
   
   echo "✅ Fail2ban installed successfully"
   
-  # Install GeoIP tools (try both old and new packages)
-  echo "Installing GeoIP tools..."
-  sudo apt-get install -y geoip-bin geoip-database 2>/dev/null || true
+  # Install GeoIP2 tools (modern replacement for deprecated GeoIP Legacy)
+  echo "Installing GeoIP2 tools and database..."
   
-  # Try to install geoip-database-extra (may not be available on all Ubuntu versions)
-  if sudo apt-cache show geoip-database-extra >/dev/null 2>&1; then
-    if sudo apt-get install -y geoip-database-extra 2>/dev/null; then
-      echo "✅ GeoIP database extra installed"
-    else
-      echo "⚠️  geoip-database-extra package found but failed to install, using basic GeoIP database"
+  # Install mmdb-bin for GeoIP2 lookups (replacement for geoiplookup)
+  sudo apt-get install -y mmdb-bin 2>/dev/null || true
+  
+  # Install GeoIP database update tool
+  sudo apt-get install -y geoipupdate 2>/dev/null || true
+  
+  # Download GeoLite2 Country database (free version)
+  echo "Downloading GeoLite2 Country database..."
+  sudo mkdir -p /usr/share/GeoIP
+  
+  # Download latest GeoLite2-Country database
+  if command -v wget >/dev/null 2>&1; then
+    sudo wget -q -O /tmp/GeoLite2-Country.mmdb.tar.gz \
+      "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb.tar.gz" 2>/dev/null || \
+    sudo wget -q -O /usr/share/GeoIP/GeoLite2-Country.mmdb \
+      "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb" 2>/dev/null
+    
+    # Extract if tar.gz was downloaded
+    if [ -f /tmp/GeoLite2-Country.mmdb.tar.gz ]; then
+      sudo tar -xzf /tmp/GeoLite2-Country.mmdb.tar.gz -C /usr/share/GeoIP/ --strip-components=1 2>/dev/null || true
+      sudo rm -f /tmp/GeoLite2-Country.mmdb.tar.gz
+    fi
+  fi
+  
+  # Verify GeoIP2 database
+  if [ -f /usr/share/GeoIP/GeoLite2-Country.mmdb ]; then
+    echo "✅ GeoIP2 database installed successfully"
+    
+    # Test mmdblookup if available
+    if command -v mmdblookup >/dev/null 2>&1; then
+      echo "✅ GeoIP2 lookup tool (mmdblookup) available"
     fi
   else
-    echo "⚠️  geoip-database-extra not available on this system, using basic GeoIP database"
+    echo "⚠️  GeoIP2 database download failed, GeoIP blocking may not work"
+    echo "    You can manually download from: https://github.com/P3TERX/GeoLite.mmdb"
   fi
   
   # Get the directory where this script is located
@@ -767,22 +792,28 @@ install_fail2ban() {
   # Verify installation
   if systemctl is-active --quiet fail2ban; then
     echo ""
-    echo "✅ Fail2ban installed and configured successfully with GeoIP support."
+    echo "✅ Fail2ban installed and configured successfully with GeoIP2 support."
     echo ""
     echo "📊 Active jails:"
     sudo fail2ban-client status
     echo ""
     
-    if command -v geoiplookup >/dev/null 2>&1; then
-      echo "🌍 GeoIP Tools Installed:"
-      echo "  • geoiplookup - Command line tool to query country by IP"
+    if command -v mmdblookup >/dev/null 2>&1 && [ -f /usr/share/GeoIP/GeoLite2-Country.mmdb ]; then
+      echo "🌍 GeoIP2 Tools Installed:"
+      echo "  • mmdblookup - Modern GeoIP2 lookup tool"
+      echo "  • Database: GeoLite2-Country.mmdb"
+      echo "  • Example: mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 8.8.8.8 country iso_code"
+      echo ""
+    elif command -v geoiplookup >/dev/null 2>&1; then
+      echo "🌍 GeoIP Tools Installed (Legacy):"
+      echo "  • geoiplookup - Legacy GeoIP lookup tool"
       echo "  • Example: geoiplookup 8.8.8.8"
       echo ""
     fi
     
     echo "🔒 Security Configuration:"
     echo "  • SSH: 3 attempts → 1 day ban"
-    echo "  • GeoIP: Blocking CN, RU, KP (permanent ban)"
+    echo "  • GeoIP2: Blocking CN, RU, KP (permanent ban)"
     echo "  • Recidive: 2 bans in 7 days → 30 day ban"
     echo ""
     echo "📁 Configuration loaded from: $CONFIG_DIR"
