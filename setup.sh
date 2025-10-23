@@ -126,7 +126,6 @@ INSTALL_PYTHON=${FLAGS["python"]}
 INSTALL_ZSH=${FLAGS["zsh"]}
 INSTALL_ZIMFW=${FLAGS["zimfw"]}
 UPDATE_APT=${FLAGS["apt-update"]}
-INSTALL_VPS=${FLAGS["vps"]}
 INSTALL_BASIC_TOOLS=${FLAGS["basic-tools"]}
 INSTALL_UV=${FLAGS["uv"]}
 INSTALL_FIREFOX=${FLAGS["firefox"]}
@@ -1241,7 +1240,7 @@ run_installations() {
                    nvm python uv rclone docker proxy zsh zimfw zoxide eza fastfetch \
                    qbittorrent xrdp firefox verify-xrdp; do
     
-    if [ "${FLAGS[$component]}" = "true" ]; then
+    if [ "${FLAGS[$component]:-false}" = "true" ]; then
       local func="${COMPONENT_REGISTRY[$component]}"
       
       if [ -n "$func" ]; then
