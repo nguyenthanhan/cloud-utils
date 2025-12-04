@@ -1,0 +1,24 @@
+# Aliases
+alias ls='eza'
+alias ll='ls -alF'
+alias la='ls -A'
+alias c='clear'
+if ! command -v bat &> /dev/null; then
+    alias bat="batcat"
+fi
+alias cat="bat --paging=never"
+alias ...='cd ../..'
+cd() {
+  if [[ "$1" == icloud* ]]; then
+    # Replace 'icloud' with the full iCloud path
+    local target="${1/#icloud/$HOME/Library/Mobile Documents/com~apple~CloudDocs}"
+    builtin cd "$target" || return
+  else
+    builtin cd "$@" && ls -a
+  fi
+}
+
+# Aliases for mac
+alias avd='~/Library/Android/sdk/tools/emulator -list-avds'
+alias xcls='xcrun simctl list devices'
+alias python="python3"

@@ -23,9 +23,12 @@ readonly DEFAULT_PROXY_PORT="3128"
 readonly DEFAULT_SSH_PORT="22"
 readonly DEFAULT_XRDP_PORT="3389"
 
-# Proxy credentials (consider moving to .env file)
-readonly PROXY_USER="heimer1heimer2"
-readonly PROXY_PASS="Drippy-Lark7-Broker-Handbag"
+# Proxy credentials (load from environment variables with fallback defaults)
+readonly PROXY_USER="${PROXY_USER:-your_proxy_username_here}"
+readonly PROXY_PASS="${PROXY_PASS:-your_proxy_password_here}"
+
+# User password (load from environment variable)
+readonly USER_PASSWORD="${USER_PASSWORD:-}"
 
 # Script directory
 readonly SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -158,10 +161,16 @@ fi
 # UTILITY FUNCTIONS
 # =============================================================================
 
-# Function to change user password to "1"
+# Function to change user password
 change_password() {
+    if [[ -z "$USER_PASSWORD" ]]; then
+        log_error "USER_PASSWORD environment variable is not set"
+        log_error "Please set USER_PASSWORD before running this script"
+        return 1
+    fi
+    
     log_info "Changing user password..."
-    echo "$USER:1" | sudo chpasswd
+    echo "$USER:$USER_PASSWORD" | sudo chpasswd
     log_success "Password changed successfully"
 }
 
@@ -338,7 +347,7 @@ verify_xrdp_setup() {
   echo "  • Server IP: $(curl -s ifconfig.me 2>/dev/null || echo 'Check your VPS IP')"
   echo "  • Port: $xrdp_port"
   echo "  • Username: $USER"
-  echo "  • Password: 1 (if you used -set-password flag)"
+  echo "  • Password: Set via USER_PASSWORD environment variable (if you used -set-password flag)"
   echo ""
   echo "📱 To connect:"
   echo "  1. Use Windows Remote Desktop Connection"
@@ -913,7 +922,7 @@ new_vps_setup() {
   
   # Password
   echo "💾 Password:"
-  if ask_install "Change password to '1'"; then
+  if ask_install "Change password (requires USER_PASSWORD environment variable)"; then
     CHOICES["password"]="yes"
   else
     CHOICES["password"]="no"

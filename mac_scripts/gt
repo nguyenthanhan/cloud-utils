@@ -1,0 +1,83 @@
+#!/bin/zsh
+# File: mac_scripts/git-tool
+# Git tool với các lệnh rút gọn: gt fp, gt fm, gt fd
+
+# Function 1: Safe force push
+git_safe_force_push() {
+    echo "--- 🔄 Force Push (safe)..."
+    git push --force-with-lease && git fetch
+}
+
+# Function 2: Update main branch
+git_update_main() {
+    echo "--- ⬇️ Update local 'main' ---"
+    git fetch origin main:main
+    _git_clean_gone
+}
+
+# Function 3: Update develop branch
+git_update_develop() {
+    echo "--- ⬇️ Update local 'develop' ---"
+    git fetch origin develop:develop
+    _git_clean_gone
+}
+
+# Core cleanup function (internal)
+_git_clean_gone() {
+    echo "--- 🧹 Fetching & Pruning ---"
+    git fetch --all --prune
+    
+    # Find 'gone' branches BUT exclude current branch (line starts with *)
+    branches=$(git branch -vv | grep ': gone]' | grep -v '^*' | awk '{print $1}')
+    
+    if [ -z "$branches" ]; then
+        echo "--- ✅ Clean! No branches to delete (or you are on that branch)."
+    else
+        echo "--- Found and deleting branches: $branches"
+        echo "$branches" | xargs git branch -d
+    fi
+}
+
+# Main function gt
+gt() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: gt <command>"
+        echo ""
+        echo "Available commands:"
+        echo "  fp  - Force push (safe)"
+        echo "  fm  - Fetch and update main branch"
+        echo "  fd  - Fetch and update develop branch"
+        return 1
+    fi
+    
+    COMMAND="$1"
+    shift  # Remove first argument, pass rest to function
+    
+    # Map commands to functions
+    case "$COMMAND" in
+        fp)
+            git_safe_force_push "$@"
+            ;;
+        fm)
+            git_update_main "$@"
+            ;;
+        fd)
+            git_update_develop "$@"
+            ;;
+        *)
+            echo "❌ Unknown command: $COMMAND"
+            echo ""
+            echo "Available commands:"
+            echo "  fp  - Force push (safe)"
+            echo "  fm  - Fetch and update main branch"
+            echo "  fd  - Fetch and update develop branch"
+            return 1
+            ;;
+    esac
+}
+
+# Auto-execute: Gọi function gt khi chạy như script
+if [[ "${(%):-%x}" == "${0}" ]]; then
+    gt "$@"
+fi
+
