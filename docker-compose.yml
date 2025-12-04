@@ -120,6 +120,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # Connect: ssh -L 5433:localhost:5433 user@host
+  # Then: psql -h localhost -p 5433 -U ${POSTGRES17_USER} -d ${POSTGRES17_DB}
+  postgres17:
+    image: postgres:17
+    container_name: postgres17
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES17_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES17_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES17_PASSWORD:-postgres}
+    volumes:
+      - postgres17_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432" # Bind to localhost only for SSH forwarding
+    networks:
+      - ${TRAEFIK_NETWORK}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES17_USER:-postgres} -d ${POSTGRES17_DB:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Connect: ssh -L 27017:localhost:27017 user@host
   # Then: mongosh "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017"
   mongodb:
@@ -165,6 +187,7 @@ services:
 volumes:
   portainer_data:
   postgres_data:
+  postgres17_data:
   mongodb_data:
   mongodb_config:
   redis_data:
