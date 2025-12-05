@@ -4,6 +4,14 @@
 #  RCLONE "STEALTH MODE" CONFIGURATION
 # ==============================================================================
 
+# Set proxy environment variables if configured
+if [ -n "$PROXY_URL" ]; then
+    export http_proxy="$PROXY_URL"
+    export https_proxy=$http_proxy
+    export HTTP_PROXY=$http_proxy
+    export HTTPS_PROXY=$http_proxy
+fi
+
 # 1. Fake User Agent: Pretend to be Chrome on Windows to avoid "Bot" detection.
 USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -14,7 +22,7 @@ OPTS=(
     --tpslimit-burst 2              # Prevent bursting requests
     --transfers 2                   # Low concurrency
     --checkers 2                    # Low file checking parallelism
-    --drive-chunk-size 1024M         # Large chunk size for stability
+    --drive-chunk-size 256M         # Large chunk size for stability
     --fast-list                     # Use RAM to load file list (Reduces API calls significantly)
     --drive-acknowledge-abuse       # Bypass "virus/abuse" warnings on files
     --retries 10                    # Retry more often if connection drops
@@ -33,28 +41,56 @@ OPTS+=(--drive-pacer-min-sleep 200ms)
 OPTS+=(--bwlimit 50M)
 
 # ==============================================================================
-#  MAIN LOOP
+#  HELPER FUNCTION
 # ==============================================================================
 
-for i in {1..100}; do
+copy_rclone() {
+    local path="$1"
+    local source="$2"
+    local destination="$3"
+    
+    # Source must be "remote:" or "remote:path_prefix/" format - just concatenate
+    local source_full="${source}${path}"
+    
+    # Destination: if starts with /, it's local path, otherwise it's remote format
+    local dest_full
+    if [[ "$destination" == /* ]]; then
+        dest_full="${destination}/${path}"
+    else
+        dest_full="${destination}${path}"
+    fi
+    
+    echo "Copying: $source_full -> $dest_full"
+    rclone copy "$source_full" "$dest_full" "${OPTS[@]}"
+}
+
+# ==============================================================================
+#  MAIN EXECUTION FUNCTION
+# ==============================================================================
+
+start_transfer() {
     echo "=========================================="
-    echo " STARTING ROUND: $i"
+    echo " STARTING RCLONE TRANSFER"
     echo "=========================================="
 
-    rclone copy od1:MAIN gd1:MAIN "${OPTS[@]}"
+    # Source must be "remote:" or "remote:path_prefix/" format
+    # Destination can be "remote:" or "remote:path_prefix/" for remote, or local path (starts with /) for local
+    # Copy to local Mac/Linux
 
-    rclone copy "od1:Torrent/Oversize" "gd4:Torrent/Oversize" "${OPTS[@]}"
+    # od0:
+    copy_rclone "23.10.21.gd/Daisy Taylor Pack" "od0:Torrent0/" "gd1:"
 
-    rclone copy "od1:Torrent/Private Photoshoot Bai Xue (Jia Fei)" "gd4:Torrent/Private Photoshoot Bai Xue (Jia Fei)" "${OPTS[@]}"
+    # od1:
+    copy_rclone "Torrent/Oversize" "od1:" "gd4:"
+    copy_rclone "Torrent/_reseed" "od1:" "gd7:"
 
-    rclone copy "od1:Torrent/Weekly Playboy 週刊プレイボーイ" "gd4:Torrent/Weekly Playboy 週刊プレイボーイ" "${OPTS[@]}"
+    # od3:
+    copy_rclone "Torrent3/_like8/Onlyfans - Hanson Hookup God, Big And Fierce, Explosively Fucks" "od3:" "gd1:"
 
-    rclone copy "od1:Torrent/_reseed" "gd7:Torrent/_reseed" "${OPTS[@]}"
-
-    # --- Sleep Logic ---
     echo "------------------------------------------"
-    echo " ROUND $i COMPLETED."
-    echo " SLEEPING FOR 5 MINUTES (300s) TO COOL DOWN API..."
+    echo " TRANSFER COMPLETED."
     echo "------------------------------------------"
-    sleep 300 
-done
+}
+
+# Execute transfer
+start_transfer
