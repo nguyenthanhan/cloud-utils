@@ -51,7 +51,7 @@ services:
       - ${TRAEFIK_NETWORK}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`${TRAEFIK_HOST}`)"
+      - "traefik.http.routers.dashboard.rule=Host(`${TRAEFIK_HOST}.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls=true"
       - "traefik.http.routers.dashboard.tls.certresolver=cloudflare"
@@ -70,7 +70,7 @@ services:
       - ${TRAEFIK_NETWORK}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.portainer.rule=Host(`${PORTAINER_HOST}`)"
+      - "traefik.http.routers.portainer.rule=Host(`${PORTAINER_HOST}.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.portainer.entrypoints=websecure"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.routers.portainer.tls.certresolver=cloudflare"
@@ -92,7 +92,7 @@ services:
       - ${TRAEFIK_NETWORK}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pdf.rule=Host(`${PDF_HOST}`)"
+      - "traefik.http.routers.pdf.rule=Host(`${PDF_HOST}.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.pdf.entrypoints=websecure"
       - "traefik.http.routers.pdf.tls=true"
       - "traefik.http.routers.pdf.tls.certresolver=cloudflare"
