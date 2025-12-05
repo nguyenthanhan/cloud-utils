@@ -5,7 +5,7 @@
 # Setup hard link for .zshrc (run once)
 # Hard link makes both files share the same content - changes to either file affect both
 create_link_zshrc() {
-    local source_file="$HOME/Documents/traefik-cloud/.zshrc"
+    local source_file="$HOME/Documents/cloud-utils/.zshrc"
     local target_file="$HOME/.zshrc"
     
     # Check if files are already hard linked (same inode)

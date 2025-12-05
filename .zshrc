@@ -139,7 +139,7 @@ export PATH=$PATH:$ANDROID_HOME/emulator
 export PATH=$PATH:$ANDROID_HOME/platform-tools
 
 # Load custom scripts
-PROJECT_PATH="$HOME/Documents/traefik-cloud"
+PROJECT_PATH="$HOME/Documents/cloud-utils"
 export PATH="$PROJECT_PATH/mac_scripts:$PATH"
 for f in "$PROJECT_PATH/mac_init/"*; do
   [ -f "$f" ] && source "$f"
