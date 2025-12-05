@@ -45,6 +45,7 @@ brew_upgrade_casks() {
     postman
     pronotes
     raycast
+    rustdesk
     slack
     spotify
     telegram
