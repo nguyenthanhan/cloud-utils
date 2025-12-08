@@ -1,0 +1,120 @@
+#!/bin/zsh
+
+brew_upgrade_casks() {
+  emulate -L zsh
+
+  # Ensure Homebrew
+  if ! command -v brew >/dev/null 2>&1; then
+    if [ -x /opt/homebrew/bin/brew ]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    else
+      echo "❌ Homebrew not found."; return 1
+    fi
+  fi
+
+  brew update && brew upgrade
+
+  # === Desired casks (edit here) ===
+  local -a desired=(
+    adguard
+    android-file-transfer
+    another-redis-desktop-manager
+    antigravity
+    brave-browser
+    bruno
+    chatgpt
+    claude
+    claude-code
+    cursor
+    figma
+    firefox
+    font-fira-code
+    google-chrome
+    grammarly-desktop
+    iina
+    kiro
+    lapce
+    microsoft-edge
+    mongodb-compass
+    navicat-premium
+    onyx
+    orbstack
+    pearcleaner
+    postman
+    pronotes
+    raycast
+    rustdesk
+    slack
+    spotify
+    telegram
+    the-unarchiver
+    visual-studio-code
+    warp
+    windsurf
+    xcodes-app
+    zed
+    zulu@17
+  )
+  # ================================
+
+  # Installed casks (normalize: strip tap prefix)
+  local -a installed raw
+  raw=($(brew list --cask --full-name 2>/dev/null))
+  installed=()
+  for c in "${raw[@]}"; do installed+=("${c##*/}"); done
+
+  # Sets
+  local -A want has
+  for c in "${desired[@]}";  do want[$c]=1; done
+  for c in "${installed[@]}"; do has[$c]=1;  done
+
+  # Compute:
+  # - missing: in desired but NOT installed
+  # - extras:  installed but NOT in desired
+  # - to_upgrade: desired ∩ installed
+  local -a missing=() extras=() to_upgrade=()
+  local -A seen
+
+  for c in "${desired[@]}"; do
+    if [[ -n ${has[$c]} ]]; then
+      to_upgrade+=("$c")
+    else
+      missing+=("$c")
+    fi
+  done
+
+  for c in "${installed[@]}"; do
+    [[ -n ${seen[$c]} ]] && continue
+    seen[$c]=1
+    [[ -z ${want[$c]} ]] && extras+=("$c")
+  done
+
+  # Print lists
+  if (( ${#missing[@]} )); then
+    echo "🟢 In desired but NOT installed:"
+    for c in "${missing[@]}"; do print -P "%F{green}- $c%f"; done
+    echo
+  fi
+
+  if (( ${#extras[@]} )); then
+    echo "🟢 Installed but NOT in desired:"
+    for c in "${extras[@]}"; do print -P "%F{green}- $c%f"; done
+    echo
+  fi
+
+
+  # Upgrade only already-installed desired casks (single command)
+  if (( ${#to_upgrade[@]} )); then
+    echo "🔧 Upgrading installed desired casks:"
+    brew upgrade --cask "${to_upgrade[@]}"
+  else
+    echo "ℹ️ No desired casks are currently installed; skipping upgrade."
+  fi
+
+  # Cleanup
+  brew cleanup --prune=all
+}
+
+brew_upgrade_casks

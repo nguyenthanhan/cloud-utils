@@ -51,7 +51,7 @@ services:
       - ${TRAEFIK_NETWORK}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`${TRAEFIK_HOST}`)"
+      - "traefik.http.routers.dashboard.rule=Host(`${TRAEFIK_HOST}.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls=true"
       - "traefik.http.routers.dashboard.tls.certresolver=cloudflare"
@@ -70,7 +70,7 @@ services:
       - ${TRAEFIK_NETWORK}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.portainer.rule=Host(`${PORTAINER_HOST}`)"
+      - "traefik.http.routers.portainer.rule=Host(`${PORTAINER_HOST}.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.portainer.entrypoints=websecure"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.routers.portainer.tls.certresolver=cloudflare"
@@ -92,7 +92,7 @@ services:
       - ${TRAEFIK_NETWORK}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pdf.rule=Host(`${PDF_HOST}`)"
+      - "traefik.http.routers.pdf.rule=Host(`${PDF_HOST}.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.pdf.entrypoints=websecure"
       - "traefik.http.routers.pdf.tls=true"
       - "traefik.http.routers.pdf.tls.certresolver=cloudflare"
@@ -116,6 +116,28 @@ services:
       - ${TRAEFIK_NETWORK}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Connect: ssh -L 5433:localhost:5433 user@host
+  # Then: psql -h localhost -p 5433 -U ${POSTGRES17_USER} -d ${POSTGRES17_DB}
+  postgres17:
+    image: postgres:17
+    container_name: postgres17
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES17_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES17_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES17_PASSWORD:-postgres}
+    volumes:
+      - postgres17_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432" # Bind to localhost only for SSH forwarding
+    networks:
+      - ${TRAEFIK_NETWORK}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES17_USER:-postgres} -d ${POSTGRES17_DB:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -165,6 +187,7 @@ services:
 volumes:
   portainer_data:
   postgres_data:
+  postgres17_data:
   mongodb_data:
   mongodb_config:
   redis_data:

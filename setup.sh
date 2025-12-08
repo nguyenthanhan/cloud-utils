@@ -23,9 +23,12 @@ readonly DEFAULT_PROXY_PORT="3128"
 readonly DEFAULT_SSH_PORT="22"
 readonly DEFAULT_XRDP_PORT="3389"
 
-# Proxy credentials (consider moving to .env file)
-readonly PROXY_USER="heimer1heimer2"
-readonly PROXY_PASS="Drippy-Lark7-Broker-Handbag"
+# Proxy credentials (load from environment variables with fallback defaults)
+readonly PROXY_USER="${PROXY_USER:-your_proxy_username_here}"
+readonly PROXY_PASS="${PROXY_PASS:-your_proxy_password_here}"
+
+# User password (load from environment variable)
+readonly USER_PASSWORD="${USER_PASSWORD:-}"
 
 # Script directory
 readonly SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -66,7 +69,7 @@ log_warning() {
 
 # Define arrays for flags and their default values
 declare -A FLAGS=(
-  ["nvm"]=false
+  ["fnm"]=false
   ["rclone"]=false
   ["docker"]=false
   ["xrdp"]=false
@@ -75,6 +78,7 @@ declare -A FLAGS=(
   ["python"]=false
   ["zsh"]=false
   ["zimfw"]=false
+  ["bash-it"]=false
   ["apt-update"]=true
   ["basic-tools"]=false
   ["uv"]=false
@@ -116,7 +120,7 @@ for arg in "$@"; do
 done
 
 # Convert flags to variables for backwards compatibility
-INSTALL_NVM=${FLAGS["nvm"]}
+INSTALL_FNM=${FLAGS["fnm"]}
 INSTALL_RCLONE=${FLAGS["rclone"]}
 INSTALL_DOCKER=${FLAGS["docker"]}
 INSTALL_XRDP=${FLAGS["xrdp"]}
@@ -125,6 +129,7 @@ INSTALL_QBITTORRENT=${FLAGS["qbittorrent"]}
 INSTALL_PYTHON=${FLAGS["python"]}
 INSTALL_ZSH=${FLAGS["zsh"]}
 INSTALL_ZIMFW=${FLAGS["zimfw"]}
+INSTALL_BASH_IT=${FLAGS["bash-it"]}
 UPDATE_APT=${FLAGS["apt-update"]}
 INSTALL_BASIC_TOOLS=${FLAGS["basic-tools"]}
 INSTALL_UV=${FLAGS["uv"]}
@@ -158,10 +163,16 @@ fi
 # UTILITY FUNCTIONS
 # =============================================================================
 
-# Function to change user password to "1"
+# Function to change user password
 change_password() {
+    if [[ -z "$USER_PASSWORD" ]]; then
+        log_error "USER_PASSWORD environment variable is not set"
+        log_error "Please set USER_PASSWORD before running this script"
+        return 1
+    fi
+    
     log_info "Changing user password..."
-    echo "$USER:1" | sudo chpasswd
+    echo "$USER:$USER_PASSWORD" | sudo chpasswd
     log_success "Password changed successfully"
 }
 
@@ -338,7 +349,7 @@ verify_xrdp_setup() {
   echo "  • Server IP: $(curl -s ifconfig.me 2>/dev/null || echo 'Check your VPS IP')"
   echo "  • Port: $xrdp_port"
   echo "  • Username: $USER"
-  echo "  • Password: 1 (if you used -set-password flag)"
+  echo "  • Password: Set via USER_PASSWORD environment variable (if you used -set-password flag)"
   echo ""
   echo "📱 To connect:"
   echo "  1. Use Windows Remote Desktop Connection"
@@ -403,6 +414,38 @@ install_zimfw() {
     log_success "zimfw installed successfully."
   else
     log_error "zimfw installation failed."
+    return 1
+  fi
+}
+
+install_bash_it() {
+  log_info "Installing bash-it (community bash framework)..."
+  
+  # Check if bash-it is already installed
+  if [ -d ~/.bash_it ]; then
+    log_warning "bash-it is already installed at ~/.bash_it"
+    log_info "Skipping bash-it installation."
+    return 0
+  fi
+  
+  # Clone bash-it repository
+  log_info "Cloning bash-it repository..."
+  if git clone --depth=1 https://github.com/Bash-it/bash-it.git ~/.bash_it; then
+    log_success "bash-it repository cloned successfully."
+  else
+    log_error "Failed to clone bash-it repository."
+    return 1
+  fi
+  
+  # Run installation script
+  log_info "Running bash-it installation script..."
+  if bash ~/.bash_it/install.sh --no-modify-config; then
+    log_success "bash-it installed successfully."
+    log_info "To enable bash-it, add the following to your ~/.bashrc:"
+    log_info "  export BASH_IT=\"\$HOME/.bash_it\""
+    log_info "  source \"\$BASH_IT/bash_it.sh\""
+  else
+    log_error "bash-it installation script failed."
     return 1
   fi
 }
@@ -560,22 +603,66 @@ install_rclone() {
   log_success "Rclone installed successfully."
 }
 
-install_nvm() {
-  if [ -d "$HOME/.nvm" ]; then
-    log_success "NVM is already installed. Skipping..."
+install_fnm() {
+  # Check if fnm is already installed
+  if command -v fnm >/dev/null 2>&1; then
+    log_success "FNM is already installed: $(fnm --version)"
     return 0
   fi
   
-  log_info "Installing NVM..."
-  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
-  export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+  log_info "Installing FNM (Fast Node Manager)..."
   
-  if command -v nvm >/dev/null 2>&1; then
-    log_success "NVM installed successfully: $(nvm --version)"
-    nvm install --lts
+  # Ensure curl and unzip are installed
+  if ! command -v curl >/dev/null 2>&1; then
+    log_info "curl is required for FNM. Installing curl..."
+    sudo apt-get update -y
+    sudo apt-get install -y curl
+  fi
+  
+  if ! command -v unzip >/dev/null 2>&1; then
+    log_info "unzip is required for FNM. Installing unzip..."
+    sudo apt-get update -y
+    sudo apt-get install -y unzip
+  fi
+  
+  # Install FNM using the official installation script
+  if curl -fsSL https://fnm.vercel.app/install | bash; then
+    log_success "FNM installation script completed."
+    
+    # Source FNM in current shell session
+    export PATH="$HOME/.local/share/fnm:$PATH"
+    eval "$(fnm env --use-on-cd)"
+    
+    # Add FNM initialization to shell configuration files
+    if [[ -f "$HOME/.bashrc" ]]; then
+      if ! grep -q "fnm env" "$HOME/.bashrc"; then
+        echo "" >> "$HOME/.bashrc"
+        echo "# Initialize FNM (Fast Node Manager)" >> "$HOME/.bashrc"
+        echo 'export PATH="$HOME/.local/share/fnm:$PATH"' >> "$HOME/.bashrc"
+        echo 'eval "$(fnm env --use-on-cd)"' >> "$HOME/.bashrc"
+      fi
+    fi
+    
+    if [[ -f "$HOME/.zshrc" ]]; then
+      if ! grep -q "fnm env" "$HOME/.zshrc"; then
+        echo "" >> "$HOME/.zshrc"
+        echo "# Initialize FNM (Fast Node Manager)" >> "$HOME/.zshrc"
+        echo 'export PATH="$HOME/.local/share/fnm:$PATH"' >> "$HOME/.zshrc"
+        echo 'eval "$(fnm env --use-on-cd)"' >> "$HOME/.zshrc"
+      fi
+    fi
+    
+    # Verify installation
+    if command -v fnm >/dev/null 2>&1; then
+      log_success "FNM installed successfully: $(fnm --version)"
+      log_info "To use FNM, restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
+      log_info "Then install Node.js with: fnm install --lts"
+    else
+      log_warning "FNM installed but not available in current shell. Please restart your shell."
+      log_info "After restart, install Node.js with: fnm install --lts"
+    fi
   else
-    log_error "NVM installation failed."
+    log_error "FNM installation failed."
     return 1
   fi
 }
@@ -913,7 +1000,7 @@ new_vps_setup() {
   
   # Password
   echo "💾 Password:"
-  if ask_install "Change password to '1'"; then
+  if ask_install "Change password (requires USER_PASSWORD environment variable)"; then
     CHOICES["password"]="yes"
   else
     CHOICES["password"]="no"
@@ -950,10 +1037,10 @@ new_vps_setup() {
   # Development tools
   echo ""
   echo "🛠️ Step 3/8: Development Tools"
-  if ask_install "NVM (Node.js)"; then
-    CHOICES["nvm"]="yes"
+  if ask_install "FNM (Fast Node Manager)"; then
+    CHOICES["fnm"]="yes"
   else
-    CHOICES["nvm"]="no"
+    CHOICES["fnm"]="no"
   fi
   if ask_install "Python"; then
     CHOICES["python"]="yes"
@@ -1001,6 +1088,11 @@ new_vps_setup() {
     CHOICES["zimfw"]="yes"
   else
     CHOICES["zimfw"]="no"
+  fi
+  if ask_install "Bash-it framework (Bash)"; then
+    CHOICES["bash-it"]="yes"
+  else
+    CHOICES["bash-it"]="no"
   fi
   if ask_install "Zoxide (smart cd)"; then
     CHOICES["zoxide"]="yes"
@@ -1076,10 +1168,10 @@ new_vps_setup() {
   fi
   
   # Development tools
-  if [ "${CHOICES[nvm]}" = "yes" ]; then
+  if [ "${CHOICES[fnm]}" = "yes" ]; then
     echo ""
-    echo "🛠️ Installing NVM (Node.js)..."
-    install_nvm
+    echo "🛠️ Installing FNM (Fast Node Manager)..."
+    install_fnm
   fi
   if [ "${CHOICES[python]}" = "yes" ]; then
     echo ""
@@ -1122,6 +1214,11 @@ new_vps_setup() {
     echo ""
     echo "🐚 Installing Zim framework..."
     install_zimfw
+  fi
+  if [ "${CHOICES[bash-it]}" = "yes" ]; then
+    echo ""
+    echo "🐚 Installing Bash-it framework..."
+    install_bash_it
   fi
   if [ "${CHOICES[zoxide]}" = "yes" ]; then
     echo ""
@@ -1186,7 +1283,7 @@ declare -A COMPONENT_REGISTRY=(
   ["firewall"]="configure_firewall"
   ["ssh-security"]="configure_ssh_security"
   ["fail2ban"]="install_fail2ban"
-  ["nvm"]="install_nvm"
+  ["fnm"]="install_fnm"
   ["python"]="install_python"
   ["uv"]="install_uv"
   ["rclone"]="install_rclone"
@@ -1194,6 +1291,7 @@ declare -A COMPONENT_REGISTRY=(
   ["proxy"]="install_proxy"
   ["zsh"]="install_zsh"
   ["zimfw"]="install_zimfw"
+  ["bash-it"]="install_bash_it"
   ["zoxide"]="install_zoxide"
   ["eza"]="install_eza"
   ["fastfetch"]="install_fastfetch"
@@ -1210,7 +1308,7 @@ declare -A COMPONENT_DESCRIPTIONS=(
   ["firewall"]="UFW Firewall"
   ["ssh-security"]="SSH Security (key-only)"
   ["fail2ban"]="Fail2ban intrusion prevention"
-  ["nvm"]="Node.js (NVM)"
+  ["fnm"]="Node.js (FNM - Fast Node Manager)"
   ["python"]="Python"
   ["uv"]="UV Python package manager"
   ["rclone"]="Rclone cloud storage sync"
@@ -1218,6 +1316,7 @@ declare -A COMPONENT_DESCRIPTIONS=(
   ["proxy"]="Squid proxy server"
   ["zsh"]="Zsh shell"
   ["zimfw"]="Zim framework"
+  ["bash-it"]="Bash-it framework"
   ["zoxide"]="Zoxide (smart cd)"
   ["eza"]="Eza (ls replacement)"
   ["fastfetch"]="Fastfetch system info"
@@ -1237,7 +1336,7 @@ run_installations() {
   
   # Run installations in order
   for component in apt-update basic-tools set-password firewall ssh-security fail2ban \
-                   nvm python uv rclone docker proxy zsh zimfw zoxide eza fastfetch \
+                   fnm python uv rclone docker proxy zsh zimfw bash-it zoxide eza fastfetch \
                    qbittorrent xrdp firefox verify-xrdp; do
     
     if [ "${FLAGS[$component]:-false}" = "true" ]; then
@@ -1288,7 +1387,7 @@ run_installations() {
     log_info "No installation performed."
     echo ""
     echo "Available flags:"
-    echo "  -nvm -python -uv -docker -rclone -proxy [-proxy-port=PORT]"
+    echo "  -fnm -python -uv -docker -rclone -proxy [-proxy-port=PORT]"
     echo "  -zsh -zimfw -zoxide -eza -fastfetch"
     echo "  -xrdp [-xrdp-port=PORT] -firefox -qbittorrent"
     echo "  -firewall -ssh-security -fail2ban"

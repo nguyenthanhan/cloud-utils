@@ -145,16 +145,57 @@ https://your-domain:8443/dashboard/
 
 ---
 
+## Utility Scripts
+
+### Sync .zshrc with Hard Link
+
+The `create_link_zshrc` script creates a hard link between the `.zshrc` file in this project and your home directory. This allows you to manage your shell configuration from the project and have it automatically sync.
+
+**What is a hard link?**
+- Both files share the same content (same inode)
+- Changes to either file affect both
+- Useful for keeping configuration in sync
+
+**Usage:**
+```bash
+# Run the script
+zsh scripts/create_link_zshrc
+```
+
+**What it does:**
+1. Checks if files are already hard linked
+2. If `~/.zshrc` exists but is not linked, it will warn you (you need to remove it manually first)
+3. If `~/.zshrc` doesn't exist, it creates a hard link from the project's `.zshrc` to `~/.zshrc`
+
+**Note:** If you already have a `.zshrc` file in your home directory, you may want to backup it first:
+```bash
+# Backup existing .zshrc
+mv ~/.zshrc ~/.zshrc.backup
+
+# Then run the script
+zsh scripts/create_link_zshrc
+```
+
+---
+
 ## File Structure
 
 ```
 .
 ├── setup.sh                    # Main setup script
 ├── docker-compose.yml          # Traefik configuration
+├── .zshrc                      # Zsh configuration (synced via hard link)
 ├── fail2ban-configs/           # Fail2ban configs
 │   ├── fail2ban-jail.local
 │   ├── fail2ban-geoip-block.conf
 │   └── fail2ban-geoip-action.conf
+├── scripts/                    # Utility scripts
+│   ├── create_link_zshrc       # Sync .zshrc with hard link
+│   ├── brew_upgrade_casks      # Homebrew cask updater
+│   ├── db_sync_tool           # Database sync utility
+│   └── navicat_reset_trial    # Navicat trial reset
+├── init/                       # Initialization scripts
+│   └── alias                  # Shell aliases
 └── acme.json                   # Let's Encrypt certificates
 ```
 

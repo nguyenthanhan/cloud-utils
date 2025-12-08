@@ -1,0 +1,273 @@
+#!/bin/zsh
+
+# =============================================================================
+# Database Connection Tool - SSH Tunnel Manager
+# =============================================================================
+# This script manages SSH tunnels to connect to remote database services.
+# VPS configurations are loaded from secrets file (mac_scripts_secrets).
+#
+# Secrets file location:
+#   ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets
+#
+# VPS_CONFIGS format:
+#   "VPS_NAME|USER|IP|SERVICE_NAME|SERVICE_ICON|LOCAL_PORT|REMOTE_HOST|REMOTE_PORT"
+#
+# To add/remove VPS: Edit VPS_CONFIGS array in the secrets file
+# =============================================================================
+
+# Auto-load VPS configurations from secrets file
+# This ensures we always use the latest configurations
+{
+    local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
+    local secrets_file="${icloud_drive_root}/Backups/mac_scripts_secrets"
+    
+    if [[ -f "$secrets_file" ]]; then
+        source "$secrets_file" 2>/dev/null
+        if [[ -z "${VPS_CONFIGS[@]}" ]]; then
+            echo "⚠️  Warning: VPS_CONFIGS not found in secrets file"
+            echo "   Please define VPS_CONFIGS array in $secrets_file"
+            typeset -a VPS_CONFIGS=()
+        fi
+    else
+        echo "⚠️  Warning: Secrets file not found at $secrets_file"
+        echo "   Please create the file and define VPS_CONFIGS array"
+        typeset -a VPS_CONFIGS=()
+    fi
+}
+
+# =============================================================================
+
+# Check if a port is in use
+is_port_in_use() {
+    local port=$1
+    if lsof -iTCP:${port} -sTCP:LISTEN -t > /dev/null 2>&1; then
+        return 0  # Port is in use
+    else
+        return 1  # Port is free
+    fi
+}
+
+# Connect to databases via SSH tunnels
+connect_db() {
+    echo "🔌 Establishing database connections..."
+    
+    local already_connected=0
+    local newly_connected=0
+    local failed_connections=0
+    
+    # Check each port and connect if not already connected
+    typeset -A vps_groups
+    typeset -A ports_to_connect
+    
+    for config in "${VPS_CONFIGS[@]}"; do
+        IFS='|' read -r vps_name user ip service_name icon local_port remote_host remote_port <<< "$config"
+        
+        if is_port_in_use "${local_port}"; then
+            echo "⏭️  ${icon} ${service_name} (port ${local_port}): Already connected, skipping..."
+            ((already_connected++))
+        else
+            # Mark this port for connection
+            local vps_key="${vps_name}|${user}|${ip}"
+            if [[ -z "${vps_groups[$vps_key]}" ]]; then
+                vps_groups[$vps_key]="$config"
+            else
+                vps_groups[$vps_key]+=";$config"
+            fi
+            ports_to_connect[$local_port]=1
+        fi
+    done
+    
+    # Establish SSH tunnels for ports that need connection
+    if [[ ${#vps_groups[@]} -gt 0 ]]; then
+        for vps_key in ${(k)vps_groups}; do
+            IFS='|' read -r vps_name user ip <<< "$vps_key"
+            local vps_host="${user}@${ip}"
+            
+            echo "📡 Connecting to services via ${vps_name} (${ip})..."
+            
+            # Build SSH command with all port forwards for this VPS
+            local ssh_cmd="ssh -f -N"
+            local services=()
+            IFS=';' read -rA configs <<< "${vps_groups[$vps_key]}"
+            
+            for config in "${configs[@]}"; do
+                IFS='|' read -r _ _ _ service_name icon local_port remote_host remote_port <<< "$config"
+                ssh_cmd+=" -L ${local_port}:${remote_host}:${remote_port}"
+                services+=("   ${icon} ${service_name}: localhost:${local_port}")
+            done
+            
+            ssh_cmd+=" ${vps_host}"
+            
+            # Execute SSH tunnel
+            if eval "$ssh_cmd"; then
+                echo "✅ Tunnels established:"
+                for service_info in "${services[@]}"; do
+                    echo "$service_info"
+                    ((newly_connected++))
+                done
+                echo ""
+            else
+                echo "❌ Failed to establish tunnels to ${vps_name}"
+                echo "💡 Check SSH connection or if ports are already in use"
+                ((failed_connections+=${#services[@]}))
+            fi
+        done
+    fi
+    
+    # Display analytics
+    echo ""
+    echo "═══════════════════════════════════════"
+    echo "📊 CONNECTION ANALYTICS"
+    echo "═══════════════════════════════════════"
+    echo "✅ Already connected: ${already_connected}"
+    echo "🆕 Newly connected:   ${newly_connected}"
+    echo "❌ Failed:            ${failed_connections}"
+    echo "📈 Total services:    $((already_connected + newly_connected))"
+    echo "═══════════════════════════════════════"
+    echo ""
+}
+
+# Disconnect all database tunnels
+disconnect_db() {
+    echo "🔌 Closing all database tunnels..."
+    
+    local disconnected=0
+    local not_connected=0
+    
+    # Try to disconnect all configured ports
+    for config in "${VPS_CONFIGS[@]}"; do
+        IFS='|' read -r vps_name user ip service_name icon local_port remote_host remote_port <<< "$config"
+        
+        if pgrep -f "ssh.*-L ${local_port}" > /dev/null 2>&1; then
+            if pkill -f "ssh.*-L ${local_port}" 2>/dev/null; then
+                echo "✅ ${icon} ${service_name} (port ${local_port}): Disconnected"
+                ((disconnected++))
+            else
+                echo "⚠️  ${icon} ${service_name} (port ${local_port}): Failed to disconnect"
+            fi
+        else
+            echo "ℹ️  ${icon} ${service_name} (port ${local_port}): Not connected"
+            ((not_connected++))
+        fi
+    done
+    
+    # Display analytics
+    echo ""
+    echo "═══════════════════════════════════════"
+    echo "📊 DISCONNECTION ANALYTICS"
+    echo "═══════════════════════════════════════"
+    echo "✅ Disconnected:     ${disconnected}"
+    echo "ℹ️  Not connected:    ${not_connected}"
+    echo "📈 Total services:   $((disconnected + not_connected))"
+    echo "═══════════════════════════════════════"
+    echo ""
+}
+
+# Show all forwarded ports
+show_forward_port() {
+    echo ""
+    echo "══════════════════════════════════════════════════════════════"
+    echo "            📊 PORT FORWARD STATUS"
+    echo "══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    local connected=0
+    local not_connected=0
+    
+    # Check all configured services
+    echo "🟢 CONNECTED:"
+    echo ""
+    for config in "${VPS_CONFIGS[@]}"; do
+        IFS='|' read -r vps_name user ip service_name icon local_port remote_host remote_port <<< "$config"
+        
+        if is_port_in_use "${local_port}"; then
+            echo "${icon} ${service_name}:"
+            echo "   Local:  localhost:${local_port}"
+            echo "   Remote: ${remote_host}:${remote_port}"
+            echo "   Via:    ${vps_name} (${ip})"
+            echo ""
+            ((connected++))
+        fi
+    done
+    
+    if [[ $connected -eq 0 ]]; then
+        echo "   ℹ️  No active connections"
+        echo ""
+    fi
+    
+    echo "🔴 NOT CONNECTED:"
+    echo ""
+    for config in "${VPS_CONFIGS[@]}"; do
+        IFS='|' read -r vps_name user ip service_name icon local_port remote_host remote_port <<< "$config"
+        
+        if ! is_port_in_use "${local_port}"; then
+            echo "${icon} ${service_name} (port ${local_port})"
+            ((not_connected++))
+        fi
+    done
+    
+    if [[ $not_connected -eq 0 ]]; then
+        echo "   ℹ️  All services connected"
+        echo ""
+    else
+        echo ""
+    fi
+    
+    # Display analytics
+    echo "═══════════════════════════════════════"
+    echo "📊 PORT ANALYTICS"
+    echo "═══════════════════════════════════════"
+    echo "🟢 Connected:        ${connected}"
+    echo "🔴 Not connected:    ${not_connected}"
+    echo "📈 Total services:   $((connected + not_connected))"
+    echo "═══════════════════════════════════════"
+    echo ""
+    
+    if [[ $connected -eq 0 ]]; then
+        echo "💡 Run 'db_connection_tool -c' to establish connections"
+        echo ""
+    fi
+}
+
+
+# Show usage information
+show_usage() {
+    echo "Usage: db_connection_tool [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -c, --connect      Connect to all databases"
+    echo "  -d, --disconnect   Disconnect all tunnels"
+    echo "  -l, --list         Show active port forwards"
+    echo "  -h, --help         Show this help message"
+}
+
+# Auto-execute if script is run directly (not sourced)
+if [[ "${(%):-%x}" == "${0}" ]]; then
+    # Parse command line arguments
+    if [[ $# -eq 0 ]]; then
+        # No arguments provided, show usage
+        show_usage
+        exit 1
+    else
+        case "$1" in
+            -c|--connect)
+                connect_db
+                ;;
+            -d|--disconnect)
+                disconnect_db
+                ;;
+            -l|--list)
+                show_forward_port
+                ;;
+            -h|--help)
+                show_usage
+                ;;
+            *)
+                echo "❌ Unknown option: $1"
+                echo ""
+                show_usage
+                exit 1
+                ;;
+        esac
+    fi
+fi
