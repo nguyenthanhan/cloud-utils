@@ -147,6 +147,56 @@ https://your-domain:8443/dashboard/
 
 ## Utility Scripts
 
+### Database Connection Tool (`db_connection_tool`)
+
+A powerful SSH tunnel manager for connecting to remote database services. Automatically manages multiple database connections through SSH port forwarding.
+
+**Features:**
+- ✅ Automatic SSH tunnel management
+- ✅ Connect/disconnect multiple databases at once
+- ✅ Group connections by VPS (single SSH command per VPS)
+- ✅ Port conflict detection
+- ✅ Connection status monitoring with uptime
+- ✅ Detailed logging and error reporting
+- ✅ Filter connections by service name or port
+
+**Configuration:**
+VPS configurations are loaded from secrets file:
+```
+~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets
+```
+
+**VPS_CONFIGS format:**
+```
+"VPS_NAME|USER|IP|SERVICE_NAME|SERVICE_ICON|LOCAL_PORT|REMOTE_HOST|REMOTE_PORT"
+```
+
+**Usage:**
+```bash
+# Connect to all databases
+db_connection_tool -c
+
+# Connect to specific service (by name or port)
+db_connection_tool -c postgres
+db_connection_tool -c 5432
+
+# Disconnect all tunnels
+db_connection_tool -d
+
+# Disconnect specific service
+db_connection_tool -d postgres
+
+# List all port forwards (with status and uptime)
+db_connection_tool -l
+
+# Test SSH connectivity to all VPS
+db_connection_tool -t
+
+# Show help
+db_connection_tool -h
+```
+---
+
 ### Sync .zshrc with Hard Link
 
 The `create_link_zshrc` script creates a hard link between the `.zshrc` file in this project and your home directory. This allows you to manage your shell configuration from the project and have it automatically sync.
@@ -189,9 +239,10 @@ zsh scripts/create_link_zshrc
 │   ├── fail2ban-jail.local
 │   ├── fail2ban-geoip-block.conf
 │   └── fail2ban-geoip-action.conf
-├── scripts/                    # Utility scripts
-│   ├── create_link_zshrc       # Sync .zshrc with hard link
-│   ├── brew_upgrade_casks      # Homebrew cask updater
+├── mac_scripts/                # macOS utility scripts
+│   ├── db_connection_tool     # SSH tunnel manager for database connections
+│   ├── create_link_zshrc      # Sync .zshrc with hard link
+│   ├── brew_upgrade_casks     # Homebrew cask updater
 │   ├── db_sync_tool           # Database sync utility
 │   └── navicat_reset_trial    # Navicat trial reset
 ├── init/                       # Initialization scripts
