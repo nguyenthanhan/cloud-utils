@@ -22,6 +22,7 @@ brew_upgrade_casks() {
     android-file-transfer
     another-redis-desktop-manager
     antigravity
+    beekeeper-studio
     brave-browser
     bruno
     chatgpt
@@ -31,6 +32,7 @@ brew_upgrade_casks() {
     figma
     firefox
     font-fira-code
+    gonhanh
     google-chrome
     grammarly-desktop
     iina
@@ -48,6 +50,7 @@ brew_upgrade_casks() {
     rustdesk
     slack
     spotify
+    tableplus
     telegram
     the-unarchiver
     visual-studio-code
