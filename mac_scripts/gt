@@ -28,56 +28,35 @@ git_safe_force_push() {
     fi
 }
 
-# Function 2: Update main branch
-git_update_main() {
+# Function 2: Fetch main and develop (auto-detect which exist)
+git_fetch() {
     if ! _git_check_repo; then
         return 1
     fi
     
-    echo "--- ⬇️ Update local 'main' ---"
+    echo "--- ⬇️ Fetching branches ---"
+    local fetched=false
     
-    # Check if remote branch exists
-    if ! git ls-remote --heads origin main > /dev/null 2>&1; then
-        echo "--- ⚠️ Warning: Remote branch 'main' not found"
-        echo "--- Trying 'master' instead..."
-        if git ls-remote --heads origin master > /dev/null 2>&1; then
-            git fetch origin master:main
-            _git_clean_gone
-            return 0
-        else
-            echo "--- ❌ Error: Neither 'main' nor 'master' found on remote"
-            return 1
-        fi
+    # Try main (or master as fallback)
+    if git ls-remote --heads origin main > /dev/null 2>&1; then
+        echo "--- Fetching main..."
+        git fetch origin main:main && fetched=true
+    elif git ls-remote --heads origin master > /dev/null 2>&1; then
+        echo "--- Fetching master → main..."
+        git fetch origin master:main && fetched=true
     fi
     
-    if git fetch origin main:main; then
+    # Try develop
+    if git ls-remote --heads origin develop > /dev/null 2>&1; then
+        echo "--- Fetching develop..."
+        git fetch origin develop:develop && fetched=true
+    fi
+    
+    if [ "$fetched" = true ]; then
         _git_clean_gone
         return 0
     else
-        echo "--- ❌ Error: Failed to fetch main branch"
-        return 1
-    fi
-}
-
-# Function 3: Update develop branch
-git_update_develop() {
-    if ! _git_check_repo; then
-        return 1
-    fi
-    
-    echo "--- ⬇️ Update local 'develop' ---"
-    
-    # Check if remote branch exists
-    if ! git ls-remote --heads origin develop > /dev/null 2>&1; then
-        echo "--- ❌ Error: Remote branch 'develop' not found"
-        return 1
-    fi
-    
-    if git fetch origin develop:develop; then
-        _git_clean_gone
-        return 0
-    else
-        echo "--- ❌ Error: Failed to fetch develop branch"
+        echo "--- ❌ No main/master/develop branches found on remote"
         return 1
     fi
 }
@@ -166,8 +145,7 @@ gt() {
         echo ""
         echo "Available commands:"
         echo "  fp     - Force push (safe)"
-        echo "  fm     - Fetch and update main branch"
-        echo "  fd     - Fetch and update develop branch"
+        echo "  fetch  - Fetch main & develop (auto-detect)"
         echo "  clean  - Clean up gone branches (use --force to force delete)"
         return 1
     fi
@@ -180,11 +158,8 @@ gt() {
         fp)
             git_safe_force_push "$@"
             ;;
-        fm)
-            git_update_main "$@"
-            ;;
-        fd)
-            git_update_develop "$@"
+        fetch)
+            git_fetch "$@"
             ;;
         clean)
             git_clean "$@"
@@ -194,8 +169,7 @@ gt() {
             echo ""
             echo "Available commands:"
             echo "  fp     - Force push (safe)"
-            echo "  fm     - Fetch and update main branch"
-            echo "  fd     - Fetch and update develop branch"
+            echo "  fetch  - Fetch main & develop (auto-detect)"
             echo "  clean  - Clean up gone branches (use --force to force delete)"
             return 1
             ;;
