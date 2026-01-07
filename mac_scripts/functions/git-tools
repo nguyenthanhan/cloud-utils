@@ -1,0 +1,237 @@
+
+# Check if we're in a git repository
+_git_check_repo() {
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        echo "❌ Error: Not in a git repository"
+        return 1
+    fi
+    return 0
+}
+
+# Function 1: Safe force push
+git_safe_force_push() {
+    if ! _git_check_repo; then
+        return 1
+    fi
+    
+    echo "--- 🔄 Force Push (safe)..."
+    if git push --force-with-lease 2>/dev/null; then
+        echo "--- ✅ Force push successful"
+        echo "--- ⬇️ Fetching..."
+        if git fetch 2>/dev/null; then
+            echo "--- ✅ Fetch successful"
+        else
+            echo "--- ❌ Fetch failed"
+        fi
+        return 0
+    else
+        echo "--- ❌ Force push failed"
+        return 1
+    fi
+}
+
+# Function 2: Fetch specified branch, or both main and develop if no argument
+git_fetch() {
+    if ! _git_check_repo; then
+        return 1
+    fi
+    
+    local fetch_attempted=false
+    local fetch_success=false
+    
+    echo "--- ⬇️ Fetching branches ---"
+    
+    # Helper function to fetch a branch
+    _fetch_branch() {
+        local branch_name="$1"
+        local local_name="$2"
+        
+        if [ -z "$local_name" ]; then
+            local_name="$branch_name"
+        fi
+        
+        if git ls-remote --heads origin "$branch_name" > /dev/null 2>&1; then
+            fetch_attempted=true
+            echo "--- Fetching $branch_name..."
+            if git fetch origin "$branch_name:$local_name" 2>/dev/null; then
+                echo "--- ✅ Fetched $branch_name successfully"
+                fetch_success=true
+                return 0
+            else
+                echo "--- ❌ Failed to fetch $branch_name"
+                return 1
+            fi
+        else
+            echo "--- ⏭️ Skipped: $branch_name not found on remote"
+            return 1
+        fi
+    }
+    
+    # If no argument, fetch both main and develop
+    if [ -z "$1" ]; then
+        # Try main (or master as fallback)
+        if git ls-remote --heads origin main > /dev/null 2>&1; then
+            _fetch_branch "main" "main"
+        elif git ls-remote --heads origin master > /dev/null 2>&1; then
+            _fetch_branch "master" "main"
+        else
+            echo "--- ⏭️ Skipped: main/master not found on remote"
+        fi
+        
+        # Try develop
+        _fetch_branch "develop" "develop"
+    else
+        # Fetch the specified branch
+        _fetch_branch "$1" "$1"
+    fi
+    
+    # Always run cleanup
+    _git_clean_gone
+    
+    # Check if we're on develop or main and pull latest changes
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" = "develop" ] || [ "$current_branch" = "main" ]; then
+        echo "--- 🔄 Pulling latest changes for $current_branch..."
+        if ! git pull; then
+            echo "--- ⚠️ First pull attempt failed, trying with explicit origin/$current_branch..."
+            if ! git pull origin "$current_branch"; then
+                echo "--- ❌ Pull failed for $current_branch"
+                echo "--- ℹ️  Run 'git status' to check for local changes or conflicts"
+                echo "--- ℹ️  You might need to stash your changes or resolve conflicts"
+            else
+                echo "--- ✅ Pull successful for origin/$current_branch"
+            fi
+        else
+            echo "--- ✅ Pull successful for $current_branch"
+        fi
+    fi
+    
+    if [ "$fetch_success" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Core cleanup function (internal)
+_git_clean_gone() {
+    echo "--- 🧹 Fetching & Pruning ---"
+    
+    if git fetch --all --prune 2>/dev/null; then
+        echo "--- ✅ Fetch & prune successful"
+    else
+        echo "--- ❌ Failed to fetch/prune"
+        return 1
+    fi
+    
+    # Find 'gone' branches BUT exclude current branch (line starts with *)
+    branches=$(git branch -vv | grep ': gone]' | grep -v '^*' | awk '{print $1}')
+    
+    if [ -z "$branches" ]; then
+        echo "--- ✅ Clean! No branches to delete (or you are on that branch)."
+        return 0
+    fi
+    
+    echo "--- Found branches to delete: $branches"
+    
+    # Try soft delete first, then force if needed
+    failed_branches=""
+    for branch in $(echo "$branches"); do
+        if git branch -d "$branch" 2>/dev/null; then
+            echo "--- ✅ Deleted: $branch"
+        else
+            failed_branches="$failed_branches $branch"
+        fi
+    done
+    
+    # If there are failed branches, offer to force delete
+    if [ -n "$failed_branches" ]; then
+        echo "--- ⚠️ Some branches couldn't be deleted (may not be merged):"
+        echo "$failed_branches"
+        echo "--- 💡 Tip: Use 'gt clean --force' to force delete them"
+    fi
+}
+
+# Cleanup command (can be called directly)
+git_clean() {
+    if ! _git_check_repo; then
+        return 1
+    fi
+    
+    local force_delete=false
+    if [[ "$1" == "--force" ]] || [[ "$1" == "-f" ]]; then
+        force_delete=true
+    fi
+    
+    echo "--- 🧹 Cleaning up gone branches ---"
+    if git fetch --all --prune 2>/dev/null; then
+        echo "--- ✅ Fetch & prune successful"
+    else
+        echo "--- ❌ Failed to fetch/prune"
+    fi
+    
+    branches=$(git branch -vv | grep ': gone]' | grep -v '^*' | awk '{print $1}')
+    
+    if [ -z "$branches" ]; then
+        echo "--- ✅ Clean! No branches to delete."
+        return 0
+    fi
+    
+    echo "--- Found branches to delete: $branches"
+    
+    for branch in $(echo "$branches"); do
+        if [ "$force_delete" = true ]; then
+            if git branch -D "$branch" 2>/dev/null; then
+                echo "--- ✅ Force deleted: $branch"
+            else
+                echo "--- ❌ Failed to delete: $branch"
+            fi
+        else
+            if git branch -d "$branch" 2>/dev/null; then
+                echo "--- ✅ Deleted: $branch"
+            else
+                echo "--- ⚠️ Skipped (not merged): $branch (use --force to delete)"
+            fi
+        fi
+    done
+}
+
+# Main function gt
+gt() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: gt <command> [options]"
+        echo ""
+        echo "Available commands:"
+        echo "  fp     - Force push (safe)"
+        echo "  fetch  - Fetch branch, or both main and develop if no argument"
+        echo "  clean  - Clean up gone branches (use --force to force delete)"
+        return 1
+    fi
+    
+    COMMAND="$1"
+    shift  # Remove first argument, pass rest to function
+    
+    # Map commands to functions
+    case "$COMMAND" in
+        fp)
+            git_safe_force_push "$@"
+            ;;
+        fetch)
+            git_fetch "$@"
+            ;;
+        clean)
+            git_clean "$@"
+            ;;
+        *)
+            echo "❌ Unknown command: $COMMAND"
+            echo ""
+            echo "Available commands:"
+            echo "  fp     - Force push (safe)"
+            echo "  fetch  - Fetch branch, or both main and develop if no argument"
+            echo "  clean  - Clean up gone branches (use --force to force delete)"
+            return 1
+            ;;
+    esac
+}
+
+

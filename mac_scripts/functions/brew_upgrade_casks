@@ -1,0 +1,215 @@
+
+brew_upgrade_casks() {
+  emulate -L zsh
+  
+  # Ensure Homebrew
+  if ! command -v brew >/dev/null 2>&1; then
+    if [ -x /opt/homebrew/bin/brew ]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    else
+      echo "❌ Homebrew not found."; return 1
+    fi
+  fi
+  
+  # === Desired casks (read from file) ===
+  local casks_file="$(dirname "${(%):-%x}")/casks.txt"
+  local -a desired=()
+  
+  if [[ -f "$casks_file" ]]; then
+    while IFS= read -r line; do
+      # Skip empty lines and comments
+      [[ -n "$line" && ! "$line" =~ ^[[:space:]]*# ]] && desired+=("$line")
+    done < "$casks_file"
+  else
+    echo "❌ Casks file not found: $casks_file"
+    return 1
+  fi
+  # ====================================
+  
+  # Parse arguments
+  local action=""
+  local cask_name=""
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      add)
+        action="add"
+        cask_name="$2"
+        shift 2
+        ;;
+      remove)
+        action="remove"
+        cask_name="$2"
+        shift 2
+        ;;
+      ls|list)
+        action="list"
+        shift
+        ;;
+      help)
+        echo "Usage: brew_upgrade_casks [COMMAND] [OPTIONS]"
+        echo "Commands:"
+        echo "  add <cask>         Add cask to desired list"
+        echo "  remove <cask>      Remove cask from desired list"
+        echo "  ls, list           Show current desired casks"
+        echo "  help               Show this help message"
+        return 0
+        ;;
+      *)
+        print -P "%F{red}❌ Unknown command: $1%f"
+        echo "Use 'help' for usage information"
+        return 1
+        ;;
+    esac
+  done
+  
+  # Handle add/remove/list actions
+  if [[ -n "$action" ]]; then
+    case "$action" in
+      list)
+        echo "📋 Current desired casks:"
+        for c in "${desired[@]}"; do
+          print -P "%F{cyan}  - $c%f"
+        done
+        echo "\n📊 Total: ${#desired[@]} casks"
+        return 0
+        ;;
+      add|remove)
+        if [[ -z "$cask_name" ]]; then
+          print -P "%F{red}❌ Cask name is required for $action action%f"
+          return 1
+        fi
+        
+        # Validate cask exists in Homebrew (including third-party taps)
+        if ! brew search --cask "$cask_name" 2>/dev/null | grep -q "$cask_name"; then
+          print -P "%F{yellow}⚠️  '$cask_name' not found in Homebrew casks%f"
+          print -P "%F{blue}💡 Use 'brew search --cask $cask_name' to find similar casks%f"
+          return 1
+        fi
+        
+        # Check if cask requires a third-party tap and add it if needed
+        local tap_info
+        tap_info=$(brew search --cask "$cask_name" 2>/dev/null | grep "$cask_name" | grep "/" | head -1)
+        if [[ -n "$tap_info" ]]; then
+          local tap_name=$(echo "$tap_info" | cut -d'/' -f1-2 | sed 's/^[[:space:]]*//')
+          if [[ -n "$tap_name" && "$tap_name" != "homebrew/cask" && "$tap_name" != "homebrew/cask-fonts" ]]; then
+            if ! brew tap | grep -q "^$tap_name$"; then
+              echo "🔧 Adding required tap: $tap_name"
+              brew tap "$tap_name"
+            fi
+          fi
+        fi
+        ;;
+    esac
+  fi
+    
+  if [[ -n "$action" ]]; then
+    local script_file="${(%):-%x}"
+    
+    case "$action" in
+      add)
+        local casks_file="$(dirname "${(%):-%x}")/casks.txt"
+        
+        # Check if cask already exists in casks file
+        if grep -q "^$cask_name$" "$casks_file" 2>/dev/null; then
+          print -P "%F{yellow}⚠️  '$cask_name' already exists in casks list%f"
+          return 1
+        fi
+        
+        # Add cask to file
+        echo "$cask_name" >> "$casks_file"
+        print -P "%F{green}✅ Added%f %F{cyan}'$cask_name'%F{green} to casks list%f"
+        
+        # Sort the casks file alphabetically
+        sort -o "$casks_file" "$casks_file"
+        
+        echo ""
+        echo "💡 Cask added to $casks_file"
+        echo "   The change will take effect immediately"
+        ;;
+      remove)
+        local casks_file="$(dirname "${(%):-%x}")/casks.txt"
+        
+        # Check if cask exists in casks file
+        if ! grep -q "^$cask_name$" "$casks_file" 2>/dev/null; then
+          print -P "%F{yellow}⚠️  '$cask_name' not found in casks list%f"
+          return 1
+        fi
+        
+        # Remove cask from file
+        sed -i '' "/^$cask_name$/d" "$casks_file"
+        print -P "%F{green}✅ Removed%f %F{cyan}'$cask_name'%F{green} from casks list%f"
+        
+        # Sort the casks file alphabetically
+        sort -o "$casks_file" "$casks_file"
+        
+        echo ""
+        echo "💡 Cask removed from $casks_file"
+        echo "   The change will take effect immediately"
+        ;;
+    esac
+    return 0
+  fi
+
+  brew update && brew upgrade
+
+  # Installed casks (normalize: strip tap prefix)
+  local -a installed raw
+  raw=($(brew list --cask --full-name 2>/dev/null))
+  installed=()
+  for c in "${raw[@]}"; do installed+=("${c##*/}"); done
+
+  # Sets
+  local -A want has
+  for c in "${desired[@]}";  do want[$c]=1; done
+  for c in "${installed[@]}"; do has[$c]=1;  done
+
+  # Compute:
+  # - missing: in desired but NOT installed
+  # - extras:  installed but NOT in desired
+  # - to_upgrade: desired ∩ installed
+  local -a missing=() extras=() to_upgrade=()
+  local -A seen
+
+  for c in "${desired[@]}"; do
+    if [[ -n ${has[$c]} ]]; then
+      to_upgrade+=("$c")
+    else
+      missing+=("$c")
+    fi
+  done
+
+  for c in "${installed[@]}"; do
+    [[ -n ${seen[$c]} ]] && continue
+    seen[$c]=1
+    [[ -z ${want[$c]} ]] && extras+=("$c")
+  done
+
+  # Print lists
+  if (( ${#missing[@]} )); then
+    echo "🟢 In desired but NOT installed:"
+    for c in "${missing[@]}"; do print -P "%F{green}- $c%f"; done
+    echo
+  fi
+
+  if (( ${#extras[@]} )); then
+    echo "🟢 Installed but NOT in desired:"
+    for c in "${extras[@]}"; do print -P "%F{green}- $c%f"; done
+    echo
+  fi
+
+
+  # Upgrade only already-installed desired casks (single command)
+  if (( ${#to_upgrade[@]} )); then
+    echo "🔧 Upgrading installed desired casks:"
+    brew upgrade --cask "${to_upgrade[@]}"
+  else
+    echo "ℹ️ No desired casks are currently installed; skipping upgrade."
+  fi
+
+  # Cleanup
+  brew cleanup --prune=all
+}
+

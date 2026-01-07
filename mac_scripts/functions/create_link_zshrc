@@ -1,0 +1,31 @@
+#!/bin/zsh
+
+# usage: source ~/Library/Mobile\ Documents/com~apple~CloudDocs/terminal/create_links.sh
+
+# Setup hard link for .zshrc (run once)
+# Hard link makes both files share the same content - changes to either file affect both
+create_link_zshrc() {
+    local source_file="$HOME/Documents/cloud-utils/.zshrc"
+    local target_file="$HOME/.zshrc"
+    
+    # Check if files are already hard linked (same inode)
+    if [[ -e "$target_file" ]] && [[ -e "$source_file" ]]; then
+        if [[ $(stat -f "%i" "$target_file" 2>/dev/null) == $(stat -f "%i" "$source_file" 2>/dev/null) ]]; then
+            echo "✅ Hard link already exists: $target_file"
+            return 0
+        fi
+    fi
+    
+    if [[ -e "$target_file" ]]; then
+        echo "⚠️  $target_file already exists"
+        echo "   Please remove it manually if you want to create the hard link"
+    else
+        if ln "$source_file" "$target_file"; then
+            echo "✅ Created hard link: $target_file <-> $source_file"
+            echo "   Both files now share the same content"
+        else
+            echo "❌ Failed to create hard link"
+            return 1
+        fi
+    fi
+}
