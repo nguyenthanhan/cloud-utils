@@ -196,14 +196,62 @@ git_clean() {
     done
 }
 
+# Function 3: Sync fork with upstream
+git_sync_upstream() {
+    if ! _git_check_repo; then
+        return 1
+    fi
+    
+    echo "--- 🔄 Syncing fork with upstream ---"
+    
+    # Check if upstream remote exists
+    if ! git remote get-url upstream > /dev/null 2>&1; then
+        echo "--- ❌ No upstream remote found"
+        echo "--- 💡 To add upstream: git remote add upstream <original-repo-url>"
+        echo "--- 💡 Example: git remote add upstream https://github.com/original/repo.git"
+        return 1
+    fi
+    
+    # Fetch from upstream
+    echo "--- ⬇️ Fetching from upstream..."
+    if git fetch upstream 2>/dev/null; then
+        echo "--- ✅ Fetched from upstream successfully"
+    else
+        echo "--- ❌ Failed to fetch from upstream"
+        return 1
+    fi
+    
+    # Get current branch
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    
+    # If on main/master, merge upstream changes
+    if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+        echo "--- 🔄 Merging upstream/$current_branch into $current_branch..."
+        if git merge "upstream/$current_branch" 2>/dev/null; then
+            echo "--- ✅ Merged upstream changes successfully"
+        else
+            echo "--- ❌ Merge failed - there might be conflicts"
+            echo "--- 💡 Resolve conflicts manually, then run 'git add .' and 'git commit'"
+            return 1
+        fi
+    else
+        echo "--- ℹ️ Not on main/master branch. To merge upstream changes:"
+        echo "--- 💡 git checkout main  # or master"
+        echo "--- 💡 git merge upstream/main  # or upstream/master"
+    fi
+    
+    return 0
+}
+
 # Main function gt
 gt() {
     if [[ $# -eq 0 ]]; then
         echo "Usage: gt <command> [options]"
         echo ""
         echo "Available commands:"
-        echo "  fp     - Force push (safe)"
+        echo "  push   - Force push (safe)"
         echo "  fetch  - Fetch branch, or both main and develop if no argument"
+        echo "  sync   - Sync fork with upstream"
         echo "  clean  - Clean up gone branches (use --force to force delete)"
         return 1
     fi
@@ -213,11 +261,14 @@ gt() {
     
     # Map commands to functions
     case "$COMMAND" in
-        fp)
+        push)
             git_safe_force_push "$@"
             ;;
         fetch)
             git_fetch "$@"
+            ;;
+        sync)
+            git_sync_upstream "$@"
             ;;
         clean)
             git_clean "$@"
@@ -226,8 +277,9 @@ gt() {
             echo "❌ Unknown command: $COMMAND"
             echo ""
             echo "Available commands:"
-            echo "  fp     - Force push (safe)"
+            echo "  push   - Force push (safe)"
             echo "  fetch  - Fetch branch, or both main and develop if no argument"
+            echo "  sync   - Sync fork with upstream"
             echo "  clean  - Clean up gone branches (use --force to force delete)"
             return 1
             ;;
