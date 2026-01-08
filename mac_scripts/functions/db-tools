@@ -1,0 +1,1613 @@
+#!/bin/zsh
+
+# =============================================================================
+# Database Tool - Unified Database Connection & Sync Manager
+# =============================================================================
+# This script provides unified tools for:
+# - Managing SSH tunnels to connect to remote database services
+# - Synchronizing PostgreSQL and MongoDB databases
+#
+# Secrets file location:
+#   ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets
+#
+# Required arrays in secrets file:
+#   - VPS_CONFIGS: Format "VPS_NAME|USER|IP|SERVICE_NAME|SERVICE_ICON|LOCAL_PORT|REMOTE_HOST|REMOTE_PORT"
+#   - POSTGRES_SOURCES: Format "name|postgresql://user:pass@host:port/db|database"
+#   - POSTGRES_TARGETS: Format "name|postgresql://user:pass@host:port/db?sslmode=require"
+#   - MONGO_SOURCES: Format "name|mongodb://user:pass@host:port|db1,db2,db3"
+#   - MONGO_TARGETS: Format "name|mongodb://user:pass@host:port"
+# =============================================================================
+
+# Global variables
+typeset -g SSH_TIMEOUT=10
+
+# Auto-load VPS configurations from secrets file
+# This ensures we always use the latest configurations
+{
+    local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
+    local secrets_file="${icloud_drive_root}/Backups/mac_scripts_secrets"
+    
+    if [[ -f "$secrets_file" ]]; then
+        # Source secrets file and suppress all output (including debug output)
+        {
+            source "$secrets_file" 2>/dev/null
+        } >/dev/null 2>&1
+        
+        if [[ -z "${VPS_CONFIGS[@]}" ]]; then
+            echo "⚠️  Warning: VPS_CONFIGS not found in secrets file"
+            echo "   Please define VPS_CONFIGS array in $secrets_file"
+            typeset -a VPS_CONFIGS=()
+        fi
+    else
+        echo "⚠️  Warning: Secrets file not found at $secrets_file"
+        echo "   Please create file and define VPS_CONFIGS array"
+        typeset -a VPS_CONFIGS=()
+    fi
+}
+
+# =============================================================================
+# Shared Utility Functions
+# =============================================================================
+
+# Load secrets from secrets file
+load_secrets() {
+    local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
+    local secrets_file="${icloud_drive_root}/Backups/mac_scripts_secrets"
+    
+    if [[ -f "$secrets_file" ]]; then
+        # Source secrets file - suppress all output like db_connection_tool does
+        {
+            source "$secrets_file" 2>/dev/null
+        } >/dev/null 2>&1
+        
+        # Export arrays as global variables to ensure they're available outside this function
+        if [[ -n "${VPS_CONFIGS[@]}" ]]; then
+            export VPS_CONFIGS=("${VPS_CONFIGS[@]}")
+        else
+            export VPS_CONFIGS=()
+        fi
+        
+        if [[ -n "${POSTGRES_SOURCES[@]}" ]]; then
+            export POSTGRES_SOURCES=("${POSTGRES_SOURCES[@]}")
+        else
+            export POSTGRES_SOURCES=()
+        fi
+        
+        if [[ -n "${POSTGRES_TARGETS[@]}" ]]; then
+            export POSTGRES_TARGETS=("${POSTGRES_TARGETS[@]}")
+        else
+            export POSTGRES_TARGETS=()
+        fi
+        
+        if [[ -n "${MONGO_SOURCES[@]}" ]]; then
+            export MONGO_SOURCES=("${MONGO_SOURCES[@]}")
+        else
+            export MONGO_SOURCES=()
+        fi
+        
+        if [[ -n "${MONGO_TARGETS[@]}" ]]; then
+            export MONGO_TARGETS=("${MONGO_TARGETS[@]}")
+        else
+            export MONGO_TARGETS=()
+        fi
+        
+        # Warn if no configs found
+        if [[ ${#VPS_CONFIGS[@]} -eq 0 ]] && [[ ${#POSTGRES_SOURCES[@]} -eq 0 ]] && [[ ${#MONGO_SOURCES[@]} -eq 0 ]]; then
+            echo "⚠️  Warning: No configurations found in secrets file"
+            echo "   Please define VPS_CONFIGS, POSTGRES_SOURCES, and/or MONGO_SOURCES in $secrets_file"
+        fi
+    else
+        echo "⚠️  Warning: Secrets file not found at $secrets_file"
+        echo "   Please create the file and define configurations"
+        export VPS_CONFIGS=()
+        export POSTGRES_SOURCES=()
+        export POSTGRES_TARGETS=()
+        export MONGO_SOURCES=()
+        export MONGO_TARGETS=()
+    fi
+}
+
+# Log message to stdout
+log() {
+    local level=$1
+    shift
+    local message="$@"
+    
+    if [[ "$level" == "ERROR" ]]; then
+        echo "❌ $message" >&2
+    elif [[ "$level" == "WARN" ]]; then
+        echo "⚠️  $message"
+    elif [[ "$level" == "INFO" ]]; then
+        echo "ℹ️  $message"
+    fi
+}
+
+# Filter function to remove debug output lines
+filter_debug() {
+    grep -v "^vps_name=" | \
+    grep -v "^user=" | \
+    grep -v "^ip=" | \
+    grep -v "^service_name=" | \
+    grep -v "^icon=" | \
+    grep -v "^local_port=" | \
+    grep -v "^remote_host=" | \
+    grep -v "^remote_port=" | \
+    grep -v "^_vps_name=" | \
+    grep -v "^_user=" | \
+    grep -v "^_ip=" | \
+    grep -v "^_service_name=" | \
+    grep -v "^_icon=" | \
+    grep -v "^_local_port=" | \
+    grep -v "^_remote_host=" | \
+    grep -v "^_remote_port="
+}
+
+# =============================================================================
+# Connection Module - Utility Functions
+# =============================================================================
+
+# Parse config string into variables
+# Returns 0 on success, 1 on failure
+parse_config() {
+    local config=$1
+    local vps_name_var=$2
+    local user_var=$3
+    local ip_var=$4
+    local service_name_var=$5
+    local icon_var=$6
+    local local_port_var=$7
+    local remote_host_var=$8
+    local remote_port_var=$9
+    
+    IFS='|' read -r vps_name user ip service_name icon local_port remote_host remote_port <<< "$config"
+    
+    # Validate config format (should have 8 fields)
+    local field_count=$(echo "$config" | tr '|' '\n' | wc -l | tr -d ' ')
+    if [[ $field_count -ne 8 ]]; then
+        log "ERROR" "Invalid config format (expected 8 fields, got $field_count): $config"
+        return 1
+    fi
+    
+    # Validate port numbers
+    if ! [[ "$local_port" =~ ^[0-9]+$ ]] || ! [[ "$remote_port" =~ ^[0-9]+$ ]]; then
+        log "ERROR" "Invalid port number in config: $config"
+        return 1
+    fi
+    
+    # Validate port range
+    if [[ $local_port -lt 1 ]] || [[ $local_port -gt 65535 ]] || \
+       [[ $remote_port -lt 1 ]] || [[ $remote_port -gt 65535 ]]; then
+        log "ERROR" "Port out of range (1-65535) in config: $config"
+        return 1
+    fi
+    
+    # Set variables using eval (safe here as we control the variable names)
+    eval "${vps_name_var}='${vps_name}'"
+    eval "${user_var}='${user}'"
+    eval "${ip_var}='${ip}'"
+    eval "${service_name_var}='${service_name}'"
+    eval "${icon_var}='${icon}'"
+    eval "${local_port_var}='${local_port}'"
+    eval "${remote_host_var}='${remote_host}'"
+    eval "${remote_port_var}='${remote_port}'"
+    
+    return 0
+}
+
+# Check if a port is in use
+is_port_in_use() {
+    local port=$1
+    if lsof -iTCP:${port} -sTCP:LISTEN -t > /dev/null 2>&1; then
+        return 0  # Port is in use
+    else
+        return 1  # Port is free
+    fi
+}
+
+# Get process info for a port
+get_port_process_info() {
+    local port=$1
+    local pid=$(lsof -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | head -n1)
+    
+    if [[ -n "$pid" ]]; then
+        local cmd=$(ps -p "$pid" -o command= 2>/dev/null | head -n1)
+        echo "PID: $pid, CMD: ${cmd:0:60}"
+    else
+        echo "No process found"
+    fi
+}
+
+# Check if port is used by our SSH tunnel
+is_our_ssh_tunnel() {
+    local port=$1
+    local pid=$(lsof -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | head -n1)
+    
+    if [[ -n "$pid" ]]; then
+        local cmd=$(ps -p "$pid" -o command= 2>/dev/null)
+        if echo "$cmd" | grep -q "ssh.*-L.*${port}"; then
+            return 0  # It's our tunnel
+        fi
+    fi
+    return 1  # Not our tunnel
+}
+
+# Test SSH connectivity to a host
+test_ssh_connection() {
+    local user=$1
+    local ip=$2
+    local vps_name=$3
+    local vps_host="${user}@${ip}"
+    
+    log "INFO" "Testing SSH connection to ${vps_name} (${ip})..."
+    
+    # Use timeout if available, otherwise use SSH's ConnectTimeout
+    if command -v timeout >/dev/null 2>&1; then
+        if timeout ${SSH_TIMEOUT} ssh -o ConnectTimeout=${SSH_TIMEOUT} \
+           -o BatchMode=yes -o StrictHostKeyChecking=no \
+           "$vps_host" exit 2>/dev/null; then
+            log "INFO" "SSH connection to ${vps_name} successful"
+            return 0
+        else
+            log "ERROR" "SSH connection to ${vps_name} (${ip}) failed"
+            return 1
+        fi
+    else
+        # macOS doesn't have timeout by default, use SSH ConnectTimeout only
+        if ssh -o ConnectTimeout=${SSH_TIMEOUT} \
+           -o BatchMode=yes -o StrictHostKeyChecking=no \
+           "$vps_host" exit 2>/dev/null; then
+            log "INFO" "SSH connection to ${vps_name} successful"
+            return 0
+        else
+            log "ERROR" "SSH connection to ${vps_name} (${ip}) failed"
+            return 1
+        fi
+    fi
+}
+
+# Get tunnel uptime
+get_tunnel_uptime() {
+    local port=$1
+    local pid=$(lsof -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | head -n1)
+    
+    if [[ -z "$pid" ]]; then
+        echo "N/A"
+        return 1
+    fi
+    
+    # Try to get elapsed time directly (Linux)
+    local etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ')
+    if [[ -n "$etime" ]] && [[ "$etime" != "ELAPSED" ]]; then
+        echo "$etime"
+        return 0
+    fi
+    
+    # Fallback: calculate from start time (macOS)
+    local start_time=$(ps -p "$pid" -o lstart= 2>/dev/null | tr -s ' ')
+    if [[ -n "$start_time" ]]; then
+        # Parse format: "Mon Jan 1 12:00:00 2024" or "Mon Jan  1 12:00:00 2024"
+        local start_epoch=$(date -j -f "%a %b %d %H:%M:%S %Y" "$start_time" "+%s" 2>/dev/null)
+        if [[ -z "$start_epoch" ]]; then
+            # Try alternative format with single digit day
+            start_epoch=$(date -j -f "%a %b  %d %H:%M:%S %Y" "$start_time" "+%s" 2>/dev/null)
+        fi
+        
+        if [[ -n "$start_epoch" ]]; then
+            local now_epoch=$(date "+%s")
+            local uptime_seconds=$((now_epoch - start_epoch))
+            
+            if [[ $uptime_seconds -lt 0 ]]; then
+                echo "N/A"
+                return 1
+            fi
+            
+            local days=$((uptime_seconds / 86400))
+            local hours=$(((uptime_seconds % 86400) / 3600))
+            local minutes=$(((uptime_seconds % 3600) / 60))
+            
+            if [[ $days -gt 0 ]]; then
+                echo "${days}d ${hours}h ${minutes}m"
+            elif [[ $hours -gt 0 ]]; then
+                echo "${hours}h ${minutes}m"
+            else
+                echo "${minutes}m"
+            fi
+            return 0
+        fi
+    fi
+    
+    echo "N/A"
+    return 1
+}
+
+# Find config by service name or port
+find_config() {
+    local search_term=$1
+    local found_configs=()
+    
+    for config in "${VPS_CONFIGS[@]}"; do
+        local vps_name user ip service_name icon local_port remote_host remote_port
+        if parse_config "$config" vps_name user ip service_name icon local_port remote_host remote_port; then
+            if [[ "$service_name" == "$search_term" ]] || \
+               [[ "$local_port" == "$search_term" ]] || \
+               [[ "${service_name}" =~ "$search_term" ]]; then
+                found_configs+=("$config")
+            fi
+        fi
+    done
+    
+    echo "${found_configs[@]}"
+}
+
+# Check if there are active connections
+has_active_connections() {
+    for config in "${VPS_CONFIGS[@]}"; do
+        # Skip empty configs
+        if [[ -z "$config" ]] || [[ "$config" =~ ^[[:space:]]*$ ]]; then
+            continue
+        fi
+        
+        local vps_name user ip service_name icon local_port remote_host remote_port
+        # Parse config - don't use subshell
+        if parse_config "$config" vps_name user ip service_name icon local_port remote_host remote_port 2>/dev/null; then
+            if is_port_in_use "${local_port}" && is_our_ssh_tunnel "${local_port}"; then
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# =============================================================================
+# Connection Module - Main Functions
+# =============================================================================
+
+# Connect to databases via SSH tunnels
+connect_db() {
+    # Load secrets first to ensure VPS_CONFIGS is available
+    load_secrets
+    
+    local service_filter=$1  # Optional: connect to specific service
+    
+    {
+        echo "🔌 Establishing database connections..."
+        [[ -n "$service_filter" ]] && echo "   Filter: $service_filter"
+        echo ""
+        
+        local already_connected=0
+        local newly_connected=0
+        local failed_connections=0
+        local skipped_invalid=0
+        local invalid_configs_list=()
+        
+        # Filter configs if service_filter is provided
+        local configs_to_process=()
+        if [[ -n "$service_filter" ]]; then
+            local found_configs=($(find_config "$service_filter"))
+            if [[ ${#found_configs[@]} -eq 0 ]]; then
+                echo "❌ No service found matching: $service_filter"
+                echo "💡 Use 'db-tools list' to list all available services"
+                return 1
+            fi
+            configs_to_process=("${found_configs[@]}")
+        else
+            configs_to_process=("${VPS_CONFIGS[@]}")
+        fi
+        
+        # Check each port and connect if not already connected
+        typeset -A vps_groups
+        typeset -A ports_to_connect
+        
+        for config in "${configs_to_process[@]}"; do
+            local vps_name user ip service_name icon local_port remote_host remote_port
+            
+            # Skip empty configs (from comments or blank lines)
+            if [[ -z "$config" ]] || [[ "$config" =~ ^[[:space:]]*$ ]]; then
+                continue
+            fi
+            
+            # Parse config - don't use subshell to preserve variables
+            local parse_error_file=$(mktemp)
+            if ! parse_config "$config" vps_name user ip service_name icon local_port remote_host remote_port 2>"$parse_error_file"; then
+                ((skipped_invalid++))
+                invalid_configs_list+=("$config")
+                # Show error for invalid config (filter debug output)
+                local parse_error=$(cat "$parse_error_file" 2>/dev/null)
+                if [[ -n "$parse_error" ]]; then
+                    echo "$parse_error" | filter_debug >&2
+                else
+                    echo "❌ Invalid config format: $config" >&2
+                fi
+                rm -f "$parse_error_file"
+                continue
+            fi
+            rm -f "$parse_error_file"
+        
+        if is_port_in_use "${local_port}"; then
+            if is_our_ssh_tunnel "${local_port}"; then
+                echo "⏭️  ${icon} ${service_name} (port ${local_port}): Already connected, skipping..."
+                ((already_connected++))
+            else
+                local process_info=$(get_port_process_info "${local_port}")
+                echo "⚠️  ${icon} ${service_name} (port ${local_port}): Port in use by other process"
+                echo "   ${process_info}"
+                log "WARN" "Port ${local_port} is in use by another process: ${process_info}"
+                ((failed_connections++))
+            fi
+        else
+            # Validate parsed values before adding to groups
+            if [[ -z "$vps_name" ]] || [[ -z "$user" ]] || [[ -z "$ip" ]] || [[ -z "$local_port" ]]; then
+                echo "⚠️  Skipping invalid config (missing required fields): $config" >&2
+                ((skipped_invalid++))
+                invalid_configs_list+=("$config")
+                continue
+            fi
+            
+            # Mark this port for connection
+            local vps_key="${vps_name}|${user}|${ip}"
+            if [[ -z "${vps_groups[$vps_key]}" ]]; then
+                vps_groups[$vps_key]="$config"
+            else
+                vps_groups[$vps_key]+=";$config"
+            fi
+            ports_to_connect[$local_port]=1
+        fi
+    done
+    
+    # Establish SSH tunnels for ports that need connection
+    if [[ ${#vps_groups[@]} -gt 0 ]]; then
+        for vps_key in ${(k)vps_groups}; do
+            IFS='|' read -r vps_name user ip <<< "$vps_key"
+            local vps_host="${user}@${ip}"
+            
+            echo "📡 Connecting to services via ${vps_name} (${ip})..."
+            
+            # Test SSH connection first (optional, skip if test fails but still try to connect)
+            # SSH will fail on its own if connection is not possible
+            if ! test_ssh_connection "$user" "$ip" "$vps_name"; then
+                echo "⚠️  SSH test failed for ${vps_name}, but will still attempt connection..."
+            fi
+            
+            # Build SSH command using array (safe, no eval)
+            local ssh_args=("-f" "-N" "-o" "ConnectTimeout=${SSH_TIMEOUT}" "-o" "ServerAliveInterval=60" "-o" "ServerAliveCountMax=3")
+            local services=()
+            IFS=';' read -rA configs <<< "${vps_groups[$vps_key]}"
+            
+            for config in "${configs[@]}"; do
+                local _vps_name _user _ip service_name icon local_port remote_host remote_port
+                # Parse config - don't use subshell to preserve variables
+                local parse_error_file=$(mktemp)
+                if parse_config "$config" _vps_name _user _ip service_name icon local_port remote_host remote_port 2>"$parse_error_file"; then
+                    ssh_args+=("-L" "${local_port}:${remote_host}:${remote_port}")
+                    services+=("   ${icon} ${service_name}: localhost:${local_port}")
+                fi
+                rm -f "$parse_error_file"
+            done
+            
+            ssh_args+=("${vps_host}")
+            
+            # Execute SSH tunnel using array (safe)
+            local ssh_output
+            ssh_output=$(ssh "${ssh_args[@]}" 2>&1)
+            local ssh_exit_code=$?
+            
+            if [[ $ssh_exit_code -eq 0 ]]; then
+                echo "✅ Tunnels established:"
+                for service_info in "${services[@]}"; do
+                    echo "$service_info"
+                    ((newly_connected++))
+                done
+                echo ""
+                log "INFO" "Successfully established tunnels to ${vps_name}"
+            else
+                echo "❌ Failed to establish tunnels to ${vps_name}"
+                if [[ -n "$ssh_output" ]]; then
+                    echo "   Error: $ssh_output"
+                else
+                    echo "💡 Check SSH connection, authentication, or if ports are already in use"
+                fi
+                ((failed_connections+=${#services[@]}))
+                log "ERROR" "Failed to establish tunnels to ${vps_name}: $ssh_output"
+            fi
+        done
+    fi
+    
+        # Display analytics
+        echo ""
+        echo "📊 CONNECTION ANALYTICS"
+        echo "═══════════════════════════════════════"
+        echo "✅ Already connected: ${already_connected}"
+        echo "🆕 Newly connected:   ${newly_connected}"
+        echo "❌ Failed:            ${failed_connections}"
+        if [[ $skipped_invalid -gt 0 ]]; then
+            echo "⚠️  Invalid configs:    ${skipped_invalid}"
+            echo ""
+            echo "❌ Invalid configuration(s) found:"
+            local i=1
+            for invalid_config in "${invalid_configs_list[@]}"; do
+                echo "   ${i}) ${invalid_config}"
+                ((i++))
+            done
+            echo ""
+            echo "💡 Expected format: VPS_NAME|USER|IP|SERVICE_NAME|SERVICE_ICON|LOCAL_PORT|REMOTE_HOST|REMOTE_PORT"
+            echo "💡 Check your secrets file for correct format"
+        fi
+        echo "📈 Total services:    $((already_connected + newly_connected))"
+        echo ""
+    } 2>&1 | filter_debug
+}
+
+# Disconnect all database tunnels
+disconnect_db() {
+    # Load secrets first to ensure VPS_CONFIGS is available
+    load_secrets
+    
+    local service_filter=$1  # Optional: disconnect specific service
+    
+    {
+        echo "🔌 Closing database tunnels..."
+        [[ -n "$service_filter" ]] && echo "   Filter: $service_filter"
+        echo ""
+        
+        local disconnected=0
+        local not_connected=0
+        local failed_disconnect=0
+        
+        # Filter configs if service_filter is provided
+        local configs_to_process=()
+        if [[ -n "$service_filter" ]]; then
+            local found_configs=($(find_config "$service_filter"))
+            if [[ ${#found_configs[@]} -eq 0 ]]; then
+                echo "❌ No service found matching: $service_filter"
+                echo "💡 Use 'db-tools list' to list all available services"
+                return 1
+            fi
+            configs_to_process=("${found_configs[@]}")
+        else
+            configs_to_process=("${VPS_CONFIGS[@]}")
+        fi
+        
+        # Group ports by PID to avoid killing the same SSH process multiple times
+        # (multiple ports can be forwarded by the same SSH command)
+        typeset -A pid_to_ports
+        typeset -A port_to_service
+        
+        # First pass: collect all ports and their PIDs
+        for config in "${configs_to_process[@]}"; do
+            local vps_name user ip service_name icon local_port remote_host remote_port
+            
+            # Parse config and suppress debug output
+            {
+                if ! parse_config "$config" vps_name user ip service_name icon local_port remote_host remote_port; then
+                    continue
+                fi
+            } 2>/dev/null
+        
+        # Find PID by port (more reliable than pattern matching)
+        local pid=$(lsof -iTCP:${local_port} -sTCP:LISTEN -t 2>/dev/null | head -n1)
+        
+        if [[ -n "$pid" ]]; then
+            # Verify it's an SSH process
+            local cmd=$(ps -p "$pid" -o command= 2>/dev/null)
+            if echo "$cmd" | grep -q "ssh.*-L.*${local_port}"; then
+                # Group ports by PID
+                if [[ -z "${pid_to_ports[$pid]}" ]]; then
+                    pid_to_ports[$pid]="${local_port}"
+                else
+                    pid_to_ports[$pid]+=" ${local_port}"
+                fi
+                port_to_service[$local_port]="${icon}|${service_name}"
+            else
+                echo "⚠️  ${icon} ${service_name} (port ${local_port}): Port in use by non-SSH process"
+                ((not_connected++))
+            fi
+        else
+            echo "ℹ️  ${icon} ${service_name} (port ${local_port}): Not connected"
+            ((not_connected++))
+        fi
+    done
+    
+    # Second pass: kill PIDs (each PID may handle multiple ports)
+    for pid in ${(k)pid_to_ports}; do
+        local ports=(${=pid_to_ports[$pid]})
+        local services_info=()
+        
+        for port in "${ports[@]}"; do
+            IFS='|' read -r icon service_name <<< "${port_to_service[$port]}"
+            services_info+=("${icon} ${service_name} (port ${port})")
+        done
+        
+        # Kill the process
+        if kill "$pid" 2>/dev/null; then
+            # Wait a bit and verify it's actually killed
+            sleep 0.5
+            if ! kill -0 "$pid" 2>/dev/null; then
+                echo "✅ Disconnected ${#ports[@]} service(s):"
+                for service_info in "${services_info[@]}"; do
+                    echo "   - ${service_info}"
+                    ((disconnected++))
+                done
+                log "INFO" "Disconnected PID $pid (ports: ${ports[@]})"
+            else
+                echo "⚠️  Process still running, trying force kill..."
+                kill -9 "$pid" 2>/dev/null
+                sleep 0.5
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    echo "✅ Force disconnected ${#ports[@]} service(s):"
+                    for service_info in "${services_info[@]}"; do
+                        echo "   - ${service_info}"
+                        ((disconnected++))
+                    done
+                else
+                    echo "❌ Failed to disconnect ${#ports[@]} service(s):"
+                    for service_info in "${services_info[@]}"; do
+                        echo "   - ${service_info}"
+                        ((failed_disconnect++))
+                    done
+                fi
+            fi
+        else
+            echo "❌ Failed to disconnect ${#ports[@]} service(s) (permission denied?):"
+            for service_info in "${services_info[@]}"; do
+                echo "   - ${service_info}"
+                ((failed_disconnect++))
+            done
+        fi
+    done
+    
+        # Display analytics
+        echo ""
+        echo "═══════════════════════════════════════"
+        echo "📊 DISCONNECTION ANALYTICS"
+        echo "═══════════════════════════════════════"
+        echo "✅ Disconnected:     ${disconnected}"
+        echo "ℹ️  Not connected:    ${not_connected}"
+        [[ $failed_disconnect -gt 0 ]] && echo "❌ Failed:            ${failed_disconnect}"
+        echo "📈 Total services:   $((disconnected + not_connected + failed_disconnect))"
+        echo "═══════════════════════════════════════"
+        echo ""
+    } 2>&1 | filter_debug
+}
+
+# Show all forwarded ports
+show_forward_port() {
+    # Disable any debug/trace output
+    set +x 2>/dev/null
+    
+    {
+        local connected=0
+        local not_connected=0
+        local invalid_configs=0
+        local invalid_configs_list=()
+        
+        # Print table header with proper spacing
+        printf "%-5s  %-19s  %-18s  %-18s  %-10s  %-8s\n" "STAT" "SERVICE" "LOCAL PORT" "REMOTE" "VIA" "UPTIME"
+        echo "────────────────────────────────────────────────────────────────────────────────────────────"
+        
+        # Process all services and display in table format
+        # Always load secrets to ensure we have the latest configurations
+        load_secrets
+        
+        if [[ ${#VPS_CONFIGS[@]} -eq 0 ]]; then
+            echo "⚠️  No VPS configurations found. Please check your secrets file."
+            echo ""
+            return
+        fi
+        
+        for config in "${VPS_CONFIGS[@]}"; do
+            local vps_name user ip service_name icon local_port remote_host remote_port
+            
+            # Skip empty configs (from comments or blank lines)
+            if [[ -z "$config" ]] || [[ "$config" =~ ^[[:space:]]*$ ]]; then
+                continue
+            fi
+            
+            # Parse config - don't use subshell to preserve variables
+            local parse_error_file=$(mktemp)
+            if ! parse_config "$config" vps_name user ip service_name icon local_port remote_host remote_port 2>"$parse_error_file"; then
+                ((invalid_configs++))
+                invalid_configs_list+=("$config")
+                local parse_error=$(cat "$parse_error_file" 2>/dev/null)
+                if [[ -n "$parse_error" ]]; then
+                    echo "$parse_error" | filter_debug >&2
+                fi
+                rm -f "$parse_error_file"
+                continue
+            fi
+            rm -f "$parse_error_file"
+            
+            local status_icon=""
+            local uptime=""
+            local remote_info="${remote_host}:${remote_port}"
+            
+            if is_port_in_use "${local_port}"; then
+                if is_our_ssh_tunnel "${local_port}"; then
+                    status_icon="🟢"
+                    uptime=$(get_tunnel_uptime "${local_port}" 2>/dev/null)
+                    ((connected++))
+                else
+                    status_icon="⚠️"
+                    uptime="Other"
+                fi
+            else
+                status_icon="🔴"
+                uptime="-"
+                ((not_connected++))
+            fi
+            
+            # Prepare display values (no truncation needed with better column widths)
+            local display_service="${icon} ${service_name}"
+            local display_local="localhost:${local_port}"
+            local display_remote="${remote_info}"
+            local display_via="${vps_name}"
+            
+            # Print single row per service only - this is the ONLY output for each service
+            printf "%-4s  %-18s  %-18s  %-18s  %-10s  %-8s\n" \
+                "${status_icon}" \
+                "${display_service}" \
+                "${display_local}" \
+                "${display_remote}" \
+                "${display_via}" \
+                "${uptime}"
+        done
+        
+    echo "────────────────────────────────────────────────────────────────────────────────────────────"
+        
+        # Display summary
+        if [[ $invalid_configs -gt 0 ]]; then
+            echo ""
+            echo "⚠️  ${invalid_configs} invalid config(s) - check secrets file format"
+        fi
+        
+        if [[ ${#VPS_CONFIGS[@]} -gt 0 ]]; then
+            echo ""
+            echo "Summary: 🟢 ${connected} connected  |  🔴 ${not_connected} not connected"
+        fi
+    } 2>&1 | filter_debug
+}
+
+# Test SSH connectivity to all VPS
+test_connections() {
+    # Load secrets first to ensure VPS_CONFIGS is available
+    load_secrets
+    
+    {
+        echo "🧪 Testing SSH connectivity to all VPS..."
+        echo ""
+        
+        local success=0
+        local failed=0
+        typeset -A vps_hosts
+        
+        # Collect unique VPS hosts
+        for config in "${VPS_CONFIGS[@]}"; do
+            local vps_name user ip service_name icon local_port remote_host remote_port
+            
+            # Parse config and suppress debug output
+            {
+                if ! parse_config "$config" vps_name user ip service_name icon local_port remote_host remote_port; then
+                    continue
+                fi
+            } 2>/dev/null
+            
+            local vps_key="${vps_name}|${user}|${ip}"
+            if [[ -z "${vps_hosts[$vps_key]}" ]]; then
+                vps_hosts[$vps_key]="${user}|${ip}"
+            fi
+        done
+        
+        # Test each VPS
+        for vps_key in ${(k)vps_hosts}; do
+            IFS='|' read -r vps_name user ip <<< "$vps_key"
+            
+            echo -n "Testing ${vps_name} (${ip})... "
+            echo ""
+            if test_ssh_connection "$user" "$ip" "$vps_name"; then
+                echo "✅ OK"
+                ((success++))
+            else
+                echo "❌ FAILED"
+                ((failed++))
+            fi
+        done
+        
+        echo ""
+        echo "═══════════════════════════════════════"
+        echo "📊 TEST RESULTS"
+        echo "═══════════════════════════════════════"
+        echo "✅ Successful:       ${success}"
+        echo "❌ Failed:           ${failed}"
+        echo "📈 Total VPS:        $((success + failed))"
+        echo "═══════════════════════════════════════"
+        echo ""
+    } 2>&1 | filter_debug
+}
+
+# =============================================================================
+# Sync Module - Utility Functions
+# =============================================================================
+
+# Helper function to extract hostname from PostgreSQL URL
+extract_postgres_host() {
+    local url="$1"
+    # Remove postgresql:// prefix
+    local url_no_prefix=$(echo "$url" | sed 's/postgresql:\/\///')
+    # Extract host from URL (between @ and :port)
+    local host_port=$(echo "$url_no_prefix" | rev | cut -d@ -f1 | rev)
+    local host=$(echo "$host_port" | cut -d: -f1)
+    echo "$host"
+}
+
+# Helper function to extract hostname from MongoDB URI
+extract_mongo_host() {
+    local uri="$1"
+    # Handle mongodb:// and mongodb+srv:// formats
+    local uri_no_prefix=$(echo "$uri" | sed 's|mongodb+srv://||' | sed 's|mongodb://||')
+    # Extract host from URI (between @ and / or ?)
+    local host=$(echo "$uri_no_prefix" | cut -d@ -f2 | cut -d/ -f1 | cut -d'?' -f1 | cut -d: -f1)
+    echo "$host"
+}
+
+# Function to get PostgreSQL source configuration by index
+get_postgres_source_config() {
+    local index="$1"
+    local array_length=${#POSTGRES_SOURCES[@]}
+
+    # Convert to integer for comparison
+    index=$((index + 0))
+
+    if [ $index -ge 1 ] && [ $index -le $array_length ]; then
+        echo "${POSTGRES_SOURCES[$index]}"
+    else
+        echo ""
+    fi
+}
+
+# Function to get PostgreSQL target configuration by index
+get_postgres_target_config() {
+    local index="$1"
+    local array_length=${#POSTGRES_TARGETS[@]}
+    
+    # Convert to integer for comparison
+    index=$((index + 0))
+    
+    if [ $index -ge 1 ] && [ $index -le $array_length ]; then
+        echo "${POSTGRES_TARGETS[$index]}"
+    else
+        echo ""
+    fi
+}
+
+# Function to get PostgreSQL database from source by index
+get_postgres_source_database() {
+    local source_index="$1"
+    local source_config=$(get_postgres_source_config "$source_index")
+
+    if [ -z "$source_config" ]; then
+        echo ""
+        return 1
+    fi
+
+    IFS='|' read -r name url database <<< "$source_config"
+    echo "${database}"
+}
+
+# Helper function to parse PostgreSQL URL components
+_parse_postgres_url() {
+    local url="$1"
+    local prefix="$2"  # 'src' or 'tgt'
+    
+    # Remove postgresql:// prefix
+    local url_no_prefix="${url#postgresql://}"
+    
+    # Split by the last @ (the one before hostname)
+    local auth_part="${url_no_prefix%@*}"
+    local host_part="${url_no_prefix##*@}"
+    
+    # Extract user and password
+    local user="${auth_part%%:*}"
+    local pass="${auth_part#*:}"
+    
+    # Extract host and port (handle query params)
+    local host="${host_part%%:*}"
+    local port_and_params="${host_part#*:}"
+    local port="${port_and_params%%[?/]*}"
+    
+    # Export variables with prefix
+    eval "${prefix}_user='${user}'"
+    eval "${prefix}_pass='${pass}'"
+    eval "${prefix}_host='${host}'"
+    eval "${prefix}_port='${port}'"
+}
+
+# Helper function to execute psql command with optional SSL
+_exec_psql() {
+    local ssl_mode="$1"
+    shift
+    
+    if [[ "${ssl_mode}" == "require" ]]; then
+        env PGSSLMODE=require "$@"
+    else
+        "$@"
+    fi
+}
+
+# Function to find PostgreSQL 18 client version
+_find_pg18_version() {
+    local pg_dump_path="/opt/homebrew/opt/postgresql@18/bin/pg_dump"
+    
+    if [[ -f "$pg_dump_path" ]]; then
+        echo "18|$pg_dump_path"
+    else
+        echo ""
+    fi
+}
+
+# Function to perform PostgreSQL sync
+perform_postgres_sync() {
+    local src_url="$1"
+    local src_db="$2"
+    local tgt_url="$3"
+    local quiet_mode="${4:-false}"  # Optional 4th parameter for quiet mode
+    
+    # Parse URLs
+    _parse_postgres_url "$src_url" "src"
+    _parse_postgres_url "$tgt_url" "tgt"
+    
+    # Determine SSL mode
+    local tgt_sslmode="disable"
+    [[ "$tgt_url" =~ sslmode=require ]] && tgt_sslmode="require"
+    
+    # Use PostgreSQL 18 client tools (backward compatible with 16, 17, 18)
+    local pg_info=$(_find_pg18_version)
+    
+    if [[ -z "$pg_info" ]]; then
+        echo "❌ Error: PostgreSQL 18 client tools not found"
+        echo "   Please install PostgreSQL 18: brew install postgresql@18"
+        return 1
+    fi
+    
+    # Extract version and path
+    local pg_version=$(echo "$pg_info" | cut -d'|' -f1)
+    local pg_dump_path=$(echo "$pg_info" | cut -d'|' -f2)
+    
+    # Use PostgreSQL 18 for all tools (works for all lower versions: 16, 17, 18)
+    local psql_bin="/opt/homebrew/opt/postgresql@${pg_version}/bin/psql"
+    local pg_dump_bin="$pg_dump_path"
+    local pg_restore_bin="/opt/homebrew/opt/postgresql@${pg_version}/bin/pg_restore"
+    
+    # Only show header in non-quiet mode
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "====================================="
+        echo "PostgreSQL Sync: ${src_db}"
+        echo "Source: ${src_user}@${src_host}:${src_port}"
+        echo "Target: ${tgt_user}@${tgt_host}:${tgt_port}"
+        echo "-------------------------------------"
+    fi
+    
+    # 1) Terminate active connections on target (silent)
+    _exec_psql "$tgt_sslmode" \
+        env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+        -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+        -t -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${src_db}' AND pid <> pg_backend_pid();" \
+        >/dev/null 2>&1 || true
+    
+    # 2) Drop target DB if it exists (silent)
+    _exec_psql "$tgt_sslmode" \
+        env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+        -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+        -c "DROP DATABASE IF EXISTS \"${src_db}\";" \
+        >/dev/null 2>&1 || true
+    
+    # 3) Create fresh target DB (capture errors)
+    local create_error=$(
+        _exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+            -c "CREATE DATABASE \"${src_db}\";" \
+            2>&1 >/dev/null
+    )
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to create database '${src_db}'"
+        if [[ -n "$create_error" ]]; then
+            echo "   Error: $(echo "$create_error" | head -n 1)"
+        fi
+        return 1
+    fi
+    
+    # 4) Dump from source and restore into target
+    [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database..."
+    
+    # Detect target PostgreSQL version to handle compatibility
+    local tgt_version=$(env PGPASSWORD="${tgt_pass}" "$psql_bin" -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres -t -c "SELECT version();" 2>/dev/null | grep -oE "PostgreSQL [0-9]+" | grep -oE "[0-9]+" | head -1)
+    
+    # Capture errors from both dump and restore
+    local dump_error_file=$(mktemp)
+    local restore_error_file=$(mktemp)
+    
+    # If target is PostgreSQL 16 or earlier, use SQL format and filter incompatible parameters
+    # Otherwise use custom format for better performance
+    local sync_result=0
+    
+    if [[ -n "$tgt_version" ]] && [[ "$tgt_version" -le 16 ]]; then
+        # Use SQL format and filter out PostgreSQL 17+ specific parameters
+        env PGPASSWORD="${src_pass}" "$pg_dump_bin" \
+            -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" \
+            --no-owner --no-acl --clean --if-exists 2>"$dump_error_file" \
+        | grep -v "transaction_timeout" \
+        | grep -v "ALTER DATABASE.*SET transaction_timeout" \
+        | _exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${src_db}" \
+            -q 2>"$restore_error_file" >/dev/null
+        sync_result=$?
+    else
+        # Use custom format for PostgreSQL 17+ targets
+        env PGPASSWORD="${src_pass}" "$pg_dump_bin" \
+            -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" -Fc 2>"$dump_error_file" \
+        | _exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$pg_restore_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${src_db}" \
+            --clean --if-exists --no-owner --no-acl 2>"$restore_error_file" >/dev/null
+        sync_result=$?
+    fi
+    
+    if [ $sync_result -eq 0 ]; then
+        echo "✅ '${src_db}' synced successfully"
+        [[ "$quiet_mode" != "true" ]] && echo "====================================="
+        rm -f "$dump_error_file" "$restore_error_file"
+        return 0
+    else
+        echo "❌ Sync failed for '${src_db}'"
+        
+        # Show dump errors if any
+        if [[ -s "$dump_error_file" ]]; then
+            echo "   Dump errors:"
+            # Show first few error lines
+            head -n 5 "$dump_error_file" | sed 's/^/      /'
+            if [[ $(wc -l < "$dump_error_file") -gt 5 ]]; then
+                echo "      ... (more errors in dump)"
+            fi
+        fi
+        
+        # Show restore errors if any
+        if [[ -s "$restore_error_file" ]]; then
+            echo "   Restore errors:"
+            # Show first few error lines
+            head -n 5 "$restore_error_file" | sed 's/^/      /'
+            if [[ $(wc -l < "$restore_error_file") -gt 5 ]]; then
+                echo "      ... (more errors in restore)"
+            fi
+        fi
+        
+        # If no errors in files but sync failed, show exit code
+        if [[ ! -s "$dump_error_file" ]] && [[ ! -s "$restore_error_file" ]]; then
+            echo "   Exit code: $sync_result"
+            echo "   Check connection and permissions"
+        fi
+        
+        [[ "$quiet_mode" != "true" ]] && echo "====================================="
+        rm -f "$dump_error_file" "$restore_error_file"
+        return 1
+    fi
+}
+
+# Function to get MongoDB source configuration by index
+get_mongodb_source_config() {
+    local index="$1"
+    local array_length=${#MONGO_SOURCES[@]}
+    
+    # Convert to integer for comparison
+    index=$((index + 0))
+    
+    if [ $index -ge 1 ] && [ $index -le $array_length ]; then
+        echo "${MONGO_SOURCES[$index]}"
+    else
+        echo ""
+    fi
+}
+
+# Function to get MongoDB target configuration by index
+get_mongodb_target_config() {
+    local index="$1"
+    local array_length=${#MONGO_TARGETS[@]}
+    
+    # Convert to integer for comparison
+    index=$((index + 0))
+    
+    if [ $index -ge 1 ] && [ $index -le $array_length ]; then
+        echo "${MONGO_TARGETS[$index]}"
+    else
+        echo ""
+    fi
+}
+
+# Function to get database from MongoDB source by index
+get_mongodb_source_database() {
+    local source_index="$1"
+    local db_index="$2"
+    local source_config=$(get_mongodb_source_config "$source_index")
+    
+    if [ -z "$source_config" ]; then
+        echo ""
+        return 1
+    fi
+    
+    IFS='|' read -r name uri databases <<< "$source_config"
+    IFS=',' read -A db_array <<< "$databases"
+    local array_length=${#db_array[@]}
+    
+    if [ "$db_index" -ge 1 ] && [ "$db_index" -le "$array_length" ]; then
+        echo "${db_array[$db_index]}"
+    else
+        echo ""
+    fi
+}
+
+# Function to test MongoDB connection
+test_mongo_connection() {
+    local uri="$1"
+    local name="$2"
+    local quiet="${3:-false}"
+    
+    [[ "$quiet" != "true" ]] && echo "🔍 Testing connection to ${name}..."
+    
+    # Test connection by trying to list databases using mongosh or mongo
+    # This doesn't require a specific database to exist
+    local conn_error_file=$(mktemp)
+    
+    if command -v mongosh >/dev/null 2>&1; then
+        # Use mongosh if available
+        if mongosh "${uri}" --quiet --eval "db.adminCommand('ping')" >/dev/null 2>"$conn_error_file"; then
+            [[ "$quiet" != "true" ]] && echo "✅ Connection to ${name} successful"
+            rm -f "$conn_error_file"
+            return 0
+        fi
+    elif command -v mongo >/dev/null 2>&1; then
+        # Fallback to legacy mongo client
+        if mongo "${uri}" --quiet --eval "db.adminCommand('ping')" >/dev/null 2>"$conn_error_file"; then
+            [[ "$quiet" != "true" ]] && echo "✅ Connection to ${name} successful"
+            rm -f "$conn_error_file"
+            return 0
+        fi
+    else
+        # If neither mongosh nor mongo is available, skip connection test
+        [[ "$quiet" != "true" ]] && echo "⚠️  Cannot test connection (mongosh/mongo not found), proceeding anyway..."
+        rm -f "$conn_error_file"
+        return 0
+    fi
+    
+    # Connection failed - show error details
+    echo "❌ Failed to connect to ${name}"
+    if [[ -s "$conn_error_file" ]]; then
+        local conn_err=$(grep -i "error\|failed\|exception\|refused" "$conn_error_file" | head -n 1)
+        if [[ -n "$conn_err" ]]; then
+            echo "   Error: $conn_err"
+        else
+            # If no specific error found, show first non-empty line
+            local first_line=$(grep -v "^$" "$conn_error_file" | head -n 1)
+            [[ -n "$first_line" ]] && echo "   Error: $first_line"
+        fi
+    fi
+    
+    rm -f "$conn_error_file"
+    return 1
+}
+
+# Function to perform actual MongoDB sync
+perform_mongo_sync() {
+    local source_uri="$1"
+    local source_db="$2"
+    local source_name="$3"
+    local target_uri="$4"
+    local target_name="$5"
+    local quiet_mode="${6:-false}"  # Optional 6th parameter for quiet mode
+    
+    # Only show header in non-quiet mode
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "====================================="
+        echo "MongoDB Sync: ${source_db}"
+        echo "Source: ${source_name}"
+        echo "Target: ${target_name}"
+        echo "-------------------------------------"
+    fi
+    
+    # Test connections (pass quiet mode to test function)
+    if ! test_mongo_connection "${source_uri}" "${source_name}" "$quiet_mode"; then
+        [[ "$quiet_mode" != "true" ]] && echo "❌ Cannot proceed - source connection failed"
+        return 1
+    fi
+    
+    if ! test_mongo_connection "${target_uri}" "${target_name}" "$quiet_mode"; then
+        [[ "$quiet_mode" != "true" ]] && echo "❌ Cannot proceed - target connection failed"
+        return 1
+    fi
+    
+    [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database..."
+    
+    # Perform the sync (capture errors)
+    local mongo_error_file=$(mktemp)
+    
+    if [[ "$quiet_mode" == "true" ]]; then
+        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2>"$mongo_error_file" \
+        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2>>"$mongo_error_file"
+    else
+        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2>"$mongo_error_file" \
+        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2>>"$mongo_error_file"
+    fi
+    
+    local sync_result=$?
+    
+    if [ $sync_result -eq 0 ]; then
+        [[ "$quiet_mode" != "true" ]] && echo "✅ MongoDB synced successfully"
+        [[ "$quiet_mode" != "true" ]] && echo "====================================="
+        rm -f "$mongo_error_file"
+        return 0
+    else
+        [[ "$quiet_mode" != "true" ]] && echo "❌ MongoDB sync failed"
+        
+        # Show error details
+        if [[ -s "$mongo_error_file" ]]; then
+            local mongo_err=$(grep -i "error\|failed\|exception" "$mongo_error_file" | head -n 1)
+            [[ -n "$mongo_err" ]] && echo "   Error: $mongo_err"
+        fi
+        
+        [[ "$quiet_mode" != "true" ]] && echo "====================================="
+        rm -f "$mongo_error_file"
+        return 1
+    fi
+}
+
+# Function to list all sync configurations
+list_all_configs() {
+    # Load secrets first to ensure configuration arrays are available
+    load_secrets
+    
+    echo ""
+    echo "🐘 PostgreSQL Sources (${#POSTGRES_SOURCES[@]}):"
+    if [[ ${#POSTGRES_SOURCES[@]} -gt 0 ]]; then
+        local i=1
+        for source in "${POSTGRES_SOURCES[@]}"; do
+            IFS='|' read -r name url database <<< "$source"
+            local host=$(extract_postgres_host "$url")
+            echo "  ${i}) ${name} → ${database} | ${host}"
+            i=$((i + 1))
+        done
+    else
+        echo "  (No PostgreSQL sources configured)"
+    fi
+    
+    echo ""
+    echo "🎯 PostgreSQL Targets (${#POSTGRES_TARGETS[@]}):"
+    if [[ ${#POSTGRES_TARGETS[@]} -gt 0 ]]; then
+        local i=1
+        for target in "${POSTGRES_TARGETS[@]}"; do
+            IFS='|' read -r name url <<< "$target"
+            local host=$(extract_postgres_host "$url")
+            # Extract sslmode from URL for display
+            local ssl_display="disable"
+            if echo "$url" | grep -q "sslmode=require"; then
+                ssl_display="require"
+            fi
+            echo "  ${i}) ${name} | ${host} [SSL: ${ssl_display}]"
+            i=$((i + 1))
+        done
+    else
+        echo "  (No PostgreSQL targets configured)"
+    fi
+    
+    echo ""
+    echo "🍃 MongoDB Sources (${#MONGO_SOURCES[@]}):"
+    if [[ ${#MONGO_SOURCES[@]} -gt 0 ]]; then
+        local i=1
+        for source in "${MONGO_SOURCES[@]}"; do
+            IFS='|' read -r name uri databases <<< "$source"
+            local host=$(extract_mongo_host "$uri")
+            echo "  ${i}) ${name} → ${databases} | ${host}"
+            i=$((i + 1))
+        done
+    else
+        echo "  (No MongoDB sources configured)"
+    fi
+    
+    echo ""
+    echo "🎯 MongoDB Targets (${#MONGO_TARGETS[@]}):"
+    if [[ ${#MONGO_TARGETS[@]} -gt 0 ]]; then
+        local i=1
+        for target in "${MONGO_TARGETS[@]}"; do
+            IFS='|' read -r name uri <<< "$target"
+            local host=$(extract_mongo_host "$uri")
+            echo "  ${i}) ${name} | ${host}"
+            i=$((i + 1))
+        done
+    else
+        echo "  (No MongoDB targets configured)"
+    fi
+    
+    echo ""
+}
+
+# =============================================================================
+# Main Function - Command Router
+# =============================================================================
+
+# Show usage information
+show_db_tools_usage() {
+    echo "🗄️  DATABASE TOOL"
+    echo ""
+    echo "USAGE:"
+    echo "  db-tools connect [SERVICE]                    # Connect to all services (or specific)"
+    echo "  db-tools disconnect [SERVICE]                 # Disconnect all tunnels (or specific)"
+    echo "  db-tools list                                 # Show connections and sync configs"
+    echo "  db-tools test                                 # Test SSH connections"
+    echo "  db-tools sync postgres -s <idx> -d <idx>      # Sync PostgreSQL"
+    echo "  db-tools sync mongodb -s <idx> -d <idx>       # Sync MongoDB"
+    echo ""
+    echo "COMMANDS:"
+    echo "  connect [SERVICE]        Connect to databases via SSH tunnels"
+    echo "  disconnect [SERVICE]     Disconnect SSH tunnels"
+    echo "  list                     Show connections and sync configurations"
+    echo "  test                     Test SSH connectivity to all VPS"
+    echo "  sync <type>              Sync database (postgres or mongodb)"
+    echo ""
+    echo "SYNC FLAGS:"
+    echo "  --source, -s <index>     Source index (1-based)"
+    echo "  --database, -db <index>  Database index (default: 1)"
+    echo "  --destination, -d <index> Destination index (1-based)"
+    echo ""
+    echo "EXAMPLES:"
+    echo "  db-tools connect                              # Connect to all services"
+    echo "  db-tools connect postgres                     # Connect to postgres only"
+    echo "  db-tools list                                 # List all"
+    echo "  db-tools sync postgres -s 1 -d 1              # Sync PostgreSQL"
+    echo "  db-tools sync postgres -s 1 -db 1 -d 2       # Sync PostgreSQL with database"
+    echo "  db-tools sync mongodb -s 1 -d 1               # Sync MongoDB"
+    echo ""
+}
+
+# Main database tool function
+db_tools() {
+    # Load secrets first
+    load_secrets
+    
+    local command="$1"
+    shift
+    
+    case "$command" in
+        connect)
+            db_tools_connect "$@"
+            ;;
+        disconnect)
+            db_tools_disconnect "$@"
+            ;;
+        list)
+            db_tools_list "$@"
+            ;;
+        test)
+            db_tools_test "$@"
+            ;;
+        sync)
+            db_tools_sync "$@"
+            ;;
+        --help|-h|help|"")
+            show_db_tools_usage
+            ;;
+        *)
+            echo "❌ Unknown command: $command"
+            echo "💡 Available commands: connect, disconnect, list, test, sync"
+            echo "💡 Use 'db-tools --help' for usage information"
+            return 1
+            ;;
+    esac
+}
+
+# Connection commands
+db_tools_connect() {
+    local service_filter="$1"
+    connect_db "$service_filter"
+}
+
+db_tools_disconnect() {
+    local service_filter="$1"
+    disconnect_db "$service_filter"
+}
+
+db_tools_list() {
+    # Ensure secrets are loaded
+    load_secrets
+    
+    # Hiển thị cả connections và sync configs
+    echo ""
+    echo "🔌 Connections"
+    echo "────────────────────────────────────────────────────────────────────────────────────────────"
+    show_forward_port
+    
+    echo ""
+    echo "🗄️  Sync Configurations"
+    echo "────────────────────────────────────────────────────────────────────────────────────────────"
+    list_all_configs
+    echo ""
+}
+
+db_tools_test() {
+    test_connections
+}
+
+# Sync command
+db_tools_sync() {
+    local sync_type="$1"
+    shift
+    
+    case "$sync_type" in
+        postgres|postgresql|pg)
+            db_tools_sync_postgres "$@"
+            ;;
+        mongodb)
+            db_tools_sync_mongodb "$@"
+            ;;
+        *)
+            echo "❌ Unknown sync type: $sync_type"
+            echo "💡 Use: db-tools sync [postgres|mongodb] --source <idx> --destination <idx>"
+            echo "💡 Or: db-tools sync [postgres|mongodb] -s <idx> -d <idx> (short flags)"
+            return 1
+            ;;
+    esac
+}
+
+# Parse sync flags (support both long and short versions)
+db_tools_sync_postgres() {
+    # Load secrets first to ensure configuration arrays are available
+    load_secrets
+    
+    local source_idx=""
+    local db_idx=""
+    local dest_idx=""
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --source|-s)
+                source_idx="$2"
+                shift 2
+                ;;
+            --database|-db)
+                db_idx="$2"
+                shift 2
+                ;;
+            --destination|-d)
+                dest_idx="$2"
+                shift 2
+                ;;
+            *)
+                echo "❌ Unknown option: $1"
+                echo "💡 Use: db-tools sync postgres --source <idx> --destination <idx>"
+                return 1
+                ;;
+        esac
+    done
+    
+    # Validate required flags
+    if [[ -z "$source_idx" ]] || [[ -z "$dest_idx" ]]; then
+        echo "❌ Error: PostgreSQL sync requires --source and --destination flags"
+        echo "   Use 'db-tools list' to list available configurations"
+        return 1
+    fi
+    
+    # Default database index to 1 if not specified
+    db_idx=${db_idx:-1}
+    
+    # Validate source
+    local source_config=$(get_postgres_source_config "$source_idx")
+    if [[ -z "$source_config" ]]; then
+        echo "❌ Error: Invalid PostgreSQL source index: $source_idx"
+        echo "   Available sources: 1-${#POSTGRES_SOURCES[@]}"
+        return 1
+    fi
+    
+    # Validate destination
+    local dest_config=$(get_postgres_target_config "$dest_idx")
+    if [[ -z "$dest_config" ]]; then
+        echo "❌ Error: Invalid PostgreSQL destination index: $dest_idx"
+        echo "   Available destinations: 1-${#POSTGRES_TARGETS[@]}"
+        return 1
+    fi
+    
+    # Get database
+    local source_db=$(get_postgres_source_database "$source_idx")
+    if [[ -z "$source_db" ]]; then
+        echo "❌ Error: Invalid database index: $db_idx"
+        return 1
+    fi
+    
+    # Parse configs
+    IFS='|' read -r source_name source_url _ <<< "$source_config"
+    IFS='|' read -r dest_name dest_url <<< "$dest_config"
+    
+    # Show configuration and sync
+    echo ""
+    echo "🐘 PostgreSQL Sync"
+    echo "=================="
+    echo "  From: ${source_name} → Database: ${source_db}"
+    echo "  To: ${dest_name}"
+    echo ""
+    
+    perform_postgres_sync "$source_url" "$source_db" "$dest_url"
+}
+
+db_tools_sync_mongodb() {
+    # Load secrets first to ensure configuration arrays are available
+    load_secrets
+    
+    local source_idx=""
+    local db_idx=""
+    local dest_idx=""
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --source|-s)
+                source_idx="$2"
+                shift 2
+                ;;
+            --database|-db)
+                db_idx="$2"
+                shift 2
+                ;;
+            --destination|-d)
+                dest_idx="$2"
+                shift 2
+                ;;
+            *)
+                echo "❌ Unknown option: $1"
+                echo "💡 Use: db-tools sync mongodb --source <idx> --destination <idx>"
+                return 1
+                ;;
+        esac
+    done
+    
+    # Validate required flags
+    if [[ -z "$source_idx" ]] || [[ -z "$dest_idx" ]]; then
+        echo "❌ Error: MongoDB sync requires --source and --destination flags"
+        echo "   Use 'db-tools list' to list available configurations"
+        return 1
+    fi
+    
+    # Default database index to 1 if not specified
+    db_idx=${db_idx:-1}
+    
+    # Validate source
+    local source_config=$(get_mongodb_source_config "$source_idx")
+    if [[ -z "$source_config" ]]; then
+        echo "❌ Error: Invalid MongoDB source index: $source_idx"
+        echo "   Available sources: 1-${#MONGO_SOURCES[@]}"
+        return 1
+    fi
+    
+    # Validate destination
+    local dest_config=$(get_mongodb_target_config "$dest_idx")
+    if [[ -z "$dest_config" ]]; then
+        echo "❌ Error: Invalid MongoDB destination index: $dest_idx"
+        echo "   Available destinations: 1-${#MONGO_TARGETS[@]}"
+        return 1
+    fi
+    
+    # Get database
+    local source_db=$(get_mongodb_source_database "$source_idx" "$db_idx")
+    if [[ -z "$source_db" ]]; then
+        echo "❌ Error: Invalid database index: $db_idx"
+        return 1
+    fi
+    
+    # Parse configs
+    IFS='|' read -r source_name source_uri _ <<< "$source_config"
+    IFS='|' read -r dest_name dest_uri <<< "$dest_config"
+    
+    # Show configuration and sync
+    echo ""
+    echo "🍃 MongoDB Sync"
+    echo "==============="
+    echo "  From: ${source_name} → Database: ${source_db}"
+    echo "  To: ${dest_name} → Database: ${source_db}"
+    echo ""
+    
+    perform_mongo_sync "$source_uri" "$source_db" "${source_name}" "$dest_uri" "${dest_name}"
+}

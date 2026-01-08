@@ -1,8 +1,0 @@
-#!/bin/zsh
-
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-# Source and run with arguments
-source "$SCRIPT_DIR/functions/db_sync_tool"
-db_sync_tool "$@"
