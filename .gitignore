@@ -57,3 +57,6 @@ StirlingPDF/customFiles/
 
 # Stirling PDF application data and configs
 StirlingPDF/
+
+# Mac scripts secrets
+mac_scripts_secrets

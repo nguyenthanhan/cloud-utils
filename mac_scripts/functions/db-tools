@@ -7,27 +7,55 @@
 # - Managing SSH tunnels to connect to remote database services
 # - Synchronizing PostgreSQL and MongoDB databases
 #
-# Secrets file location:
-#   ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets
+# Secrets file lookup priority:
+#   1. Source code root (same directory as mac_scripts_secrets.example)
+#   2. iCloud Drive: ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets
 #
-# Required arrays in secrets file:
-#   - VPS_CONFIGS: Format "VPS_NAME|USER|IP|SERVICE_NAME|SERVICE_ICON|LOCAL_PORT|REMOTE_HOST|REMOTE_PORT"
-#   - POSTGRES_SOURCES: Format "name|postgresql://user:pass@host:port/db|database"
-#   - POSTGRES_TARGETS: Format "name|postgresql://user:pass@host:port/db?sslmode=require"
-#   - MONGO_SOURCES: Format "name|mongodb://user:pass@host:port|db1,db2,db3"
-#   - MONGO_TARGETS: Format "name|mongodb://user:pass@host:port"
+# For secrets file format, see: mac_scripts_secrets.example
 # =============================================================================
 
 # Global variables
 typeset -g SSH_TIMEOUT=10
 
+# Find secrets file - prioritize source code root, fallback to iCloud
+find_secrets_file() {
+    # Try to find root of source code (where mac_scripts_secrets.example is located)
+    # Start from script directory and go up to find the root
+    local current_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    local root_dir=""
+    
+    # Look for mac_scripts_secrets.example to identify root
+    while [[ "$current_dir" != "/" ]]; do
+        if [[ -f "$current_dir/mac_scripts_secrets.example" ]]; then
+            root_dir="$current_dir"
+            break
+        fi
+        current_dir="$(dirname "$current_dir")"
+    done
+    
+    # First priority: source code root
+    if [[ -n "$root_dir" ]] && [[ -f "$root_dir/mac_scripts_secrets" ]]; then
+        echo "$root_dir/mac_scripts_secrets"
+        return 0
+    fi
+    
+    # Second priority: iCloud Drive
+    local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
+    local icloud_secrets="${icloud_drive_root}/Backups/mac_scripts_secrets"
+    if [[ -f "$icloud_secrets" ]]; then
+        echo "$icloud_secrets"
+        return 0
+    fi
+    
+    # Not found
+    return 1
+}
+
 # Auto-load VPS configurations from secrets file
 # This ensures we always use the latest configurations
 {
-    local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
-    local secrets_file="${icloud_drive_root}/Backups/mac_scripts_secrets"
-    
-    if [[ -f "$secrets_file" ]]; then
+    local secrets_file
+    if secrets_file=$(find_secrets_file 2>/dev/null); then
         # Source secrets file and suppress all output (including debug output)
         {
             source "$secrets_file" 2>/dev/null
@@ -39,8 +67,8 @@ typeset -g SSH_TIMEOUT=10
             typeset -a VPS_CONFIGS=()
         fi
     else
-        echo "⚠️  Warning: Secrets file not found at $secrets_file"
-        echo "   Please create file and define VPS_CONFIGS array"
+        echo "⚠️  Warning: Secrets file not found"
+        echo "   Please create mac_scripts_secrets in source root or iCloud Drive"
         typeset -a VPS_CONFIGS=()
     fi
 }
@@ -51,59 +79,58 @@ typeset -g SSH_TIMEOUT=10
 
 # Load secrets from secrets file
 load_secrets() {
-    local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
-    local secrets_file="${icloud_drive_root}/Backups/mac_scripts_secrets"
-    
-    if [[ -f "$secrets_file" ]]; then
-        # Source secrets file - suppress all output like db_connection_tool does
-        {
-            source "$secrets_file" 2>/dev/null
-        } >/dev/null 2>&1
-        
-        # Export arrays as global variables to ensure they're available outside this function
-        if [[ -n "${VPS_CONFIGS[@]}" ]]; then
-            export VPS_CONFIGS=("${VPS_CONFIGS[@]}")
-        else
-            export VPS_CONFIGS=()
-        fi
-        
-        if [[ -n "${POSTGRES_SOURCES[@]}" ]]; then
-            export POSTGRES_SOURCES=("${POSTGRES_SOURCES[@]}")
-        else
-            export POSTGRES_SOURCES=()
-        fi
-        
-        if [[ -n "${POSTGRES_TARGETS[@]}" ]]; then
-            export POSTGRES_TARGETS=("${POSTGRES_TARGETS[@]}")
-        else
-            export POSTGRES_TARGETS=()
-        fi
-        
-        if [[ -n "${MONGO_SOURCES[@]}" ]]; then
-            export MONGO_SOURCES=("${MONGO_SOURCES[@]}")
-        else
-            export MONGO_SOURCES=()
-        fi
-        
-        if [[ -n "${MONGO_TARGETS[@]}" ]]; then
-            export MONGO_TARGETS=("${MONGO_TARGETS[@]}")
-        else
-            export MONGO_TARGETS=()
-        fi
-        
-        # Warn if no configs found
-        if [[ ${#VPS_CONFIGS[@]} -eq 0 ]] && [[ ${#POSTGRES_SOURCES[@]} -eq 0 ]] && [[ ${#MONGO_SOURCES[@]} -eq 0 ]]; then
-            echo "⚠️  Warning: No configurations found in secrets file"
-            echo "   Please define VPS_CONFIGS, POSTGRES_SOURCES, and/or MONGO_SOURCES in $secrets_file"
-        fi
-    else
-        echo "⚠️  Warning: Secrets file not found at $secrets_file"
-        echo "   Please create the file and define configurations"
+    local secrets_file
+    if ! secrets_file=$(find_secrets_file 2>/dev/null); then
+        echo "⚠️  Warning: Secrets file not found"
+        echo "   Please create mac_scripts_secrets in source root or iCloud Drive"
         export VPS_CONFIGS=()
         export POSTGRES_SOURCES=()
         export POSTGRES_TARGETS=()
         export MONGO_SOURCES=()
         export MONGO_TARGETS=()
+        return 1
+    fi
+    
+    # Source secrets file - suppress all output like db_connection_tool does
+    {
+        source "$secrets_file" 2>/dev/null
+    } >/dev/null 2>&1
+    
+    # Export arrays as global variables to ensure they're available outside this function
+    if [[ -n "${VPS_CONFIGS[@]}" ]]; then
+        export VPS_CONFIGS=("${VPS_CONFIGS[@]}")
+    else
+        export VPS_CONFIGS=()
+    fi
+    
+    if [[ -n "${POSTGRES_SOURCES[@]}" ]]; then
+        export POSTGRES_SOURCES=("${POSTGRES_SOURCES[@]}")
+    else
+        export POSTGRES_SOURCES=()
+    fi
+    
+    if [[ -n "${POSTGRES_TARGETS[@]}" ]]; then
+        export POSTGRES_TARGETS=("${POSTGRES_TARGETS[@]}")
+    else
+        export POSTGRES_TARGETS=()
+    fi
+    
+    if [[ -n "${MONGO_SOURCES[@]}" ]]; then
+        export MONGO_SOURCES=("${MONGO_SOURCES[@]}")
+    else
+        export MONGO_SOURCES=()
+    fi
+    
+    if [[ -n "${MONGO_TARGETS[@]}" ]]; then
+        export MONGO_TARGETS=("${MONGO_TARGETS[@]}")
+    else
+        export MONGO_TARGETS=()
+    fi
+    
+    # Warn if no configs found
+    if [[ ${#VPS_CONFIGS[@]} -eq 0 ]] && [[ ${#POSTGRES_SOURCES[@]} -eq 0 ]] && [[ ${#MONGO_SOURCES[@]} -eq 0 ]]; then
+        echo "⚠️  Warning: No configurations found in secrets file"
+        echo "   Please define VPS_CONFIGS, POSTGRES_SOURCES, and/or MONGO_SOURCES in $secrets_file"
     fi
 }
 
@@ -1339,7 +1366,7 @@ show_db_tools_usage() {
     echo "USAGE:"
     echo "  db-tools connect [SERVICE]                    # Connect to all services (or specific)"
     echo "  db-tools disconnect [SERVICE]                 # Disconnect all tunnels (or specific)"
-    echo "  db-tools list                                 # Show connections and sync configs"
+    echo "  db-tools list|ls                             # Show connections and sync configs"
     echo "  db-tools test                                 # Test SSH connections"
     echo "  db-tools sync postgres -s <idx> -d <idx>      # Sync PostgreSQL"
     echo "  db-tools sync mongodb -s <idx> -d <idx>       # Sync MongoDB"
@@ -1347,7 +1374,7 @@ show_db_tools_usage() {
     echo "COMMANDS:"
     echo "  connect [SERVICE]        Connect to databases via SSH tunnels"
     echo "  disconnect [SERVICE]     Disconnect SSH tunnels"
-    echo "  list                     Show connections and sync configurations"
+    echo "  list|ls                   Show connections and sync configurations"
     echo "  test                     Test SSH connectivity to all VPS"
     echo "  sync <type>              Sync database (postgres or mongodb)"
     echo ""
@@ -1359,7 +1386,7 @@ show_db_tools_usage() {
     echo "EXAMPLES:"
     echo "  db-tools connect                              # Connect to all services"
     echo "  db-tools connect postgres                     # Connect to postgres only"
-    echo "  db-tools list                                 # List all"
+    echo "  db-tools list|ls                             # List all"
     echo "  db-tools sync postgres -s 1 -d 1              # Sync PostgreSQL"
     echo "  db-tools sync postgres -s 1 -db 1 -d 2       # Sync PostgreSQL with database"
     echo "  db-tools sync mongodb -s 1 -d 1               # Sync MongoDB"
@@ -1381,7 +1408,7 @@ db_tools() {
         disconnect)
             db_tools_disconnect "$@"
             ;;
-        list)
+        list|ls)
             db_tools_list "$@"
             ;;
         test)
@@ -1395,7 +1422,7 @@ db_tools() {
             ;;
         *)
             echo "❌ Unknown command: $command"
-            echo "💡 Available commands: connect, disconnect, list, test, sync"
+            echo "💡 Available commands: connect, disconnect, list|ls, test, sync"
             echo "💡 Use 'db-tools --help' for usage information"
             return 1
             ;;
