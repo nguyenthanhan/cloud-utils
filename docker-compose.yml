@@ -99,23 +99,24 @@ services:
       - "traefik.http.services.pdf.loadbalancer.server.port=8080"
 
   # Connect: ssh -L 5432:localhost:5432 user@host
-  # Then: psql -h localhost -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+  # Then: psql -h localhost -p 5432 -U ${POSTGRES16_USER} -d ${POSTGRES16_DB}
   postgres:
-    image: ${POSTGRES_IMAGE}
+    image: postgres:16
     container_name: postgres
     restart: always
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES16_DB}
+      POSTGRES_USER: ${POSTGRES16_USER}
+      POSTGRES_PASSWORD: ${POSTGRES16_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432" # Bind to localhost only for SSH forwarding
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES16_USER} -d ${POSTGRES16_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -133,30 +134,34 @@ services:
     volumes:
       - postgres17_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5433:5432" # Bind to localhost only for SSH forwarding
+      - "127.0.0.1:${POSTGRES17_PORT:-5433}:5432" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES17_USER:-postgres} -d ${POSTGRES17_DB:-postgres}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES17_USER:-postgres} -d ${POSTGRES17_DB:-postgres}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # Connect: ssh -L 27017:localhost:27017 user@host
-  # Then: mongosh "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017"
+  # Then: mongosh "mongodb://${MONGO8_INITDB_ROOT_USERNAME}:${MONGO8_INITDB_ROOT_PASSWORD}@localhost:27017"
   mongodb:
-    image: ${MONGODB_IMAGE}
+    image: mongo:8
     container_name: mongodb
     restart: always
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
-      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO8_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO8_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO8_INITDB_DATABASE}
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
     ports:
-      - "127.0.0.1:27017:27017" # Bind to localhost only for SSH forwarding
+      - "127.0.0.1:${MONGO8_PORT:-27017}:27017" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
@@ -166,16 +171,16 @@ services:
       retries: 5
 
   # Connect: ssh -L 6379:localhost:6379 user@host
-  # Then: redis-cli -h localhost -p 6379 -a ${REDIS_PASSWORD}
+  # Then: redis-cli -h localhost -p 6379 -a ${REDIS7_PASSWORD}
   redis:
-    image: ${REDIS_IMAGE}
+    image: redis:7
     container_name: redis
     restart: always
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS7_PASSWORD}
     volumes:
       - redis_data:/data
     ports:
-      - "127.0.0.1:6379:6379" # Bind to localhost only for SSH forwarding
+      - "127.0.0.1:${REDIS7_PORT:-6379}:6379" # Bind to localhost only for SSH forwarding
     networks:
       - ${TRAEFIK_NETWORK}
     healthcheck:
