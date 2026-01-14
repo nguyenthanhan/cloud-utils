@@ -70,10 +70,67 @@ brew_upgrade_casks() {
     case "$action" in
       list)
         echo "📋 Current desired casks:"
-        for c in "${desired[@]}"; do
-          print -P "%F{cyan}  - $c%f"
-        done
+        # Get terminal width, try stty first (more reliable in some shells), then tput, default to 100
+        local term_width
+        if [[ -t 1 ]]; then
+          term_width=$(stty size 2>/dev/null | awk '{print $2}')
+        fi
+        if [[ -z "$term_width" ]]; then
+          term_width=$(tput cols 2>/dev/null)
+        fi
+        [[ -z "$term_width" || "$term_width" -lt 20 ]] && term_width=100
+        
+        # Subtract 4 for indentation/margin
+        local col_width=$((term_width - 4))
+
+        if [[ ${#desired[@]} -gt 0 ]]; then
+          printf "%s\n" "${desired[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
+            print -P "%F{cyan}  $line%f"
+          done
+        fi
         echo "\n📊 Total: ${#desired[@]} casks"
+
+        # Check installed casks
+        local -a installed raw
+        raw=($(brew list --cask --full-name 2>/dev/null))
+        installed=()
+        for c in "${raw[@]}"; do installed+=("${c##*/}"); done
+
+        # Sets
+        local -A want has
+        for c in "${desired[@]}";  do want[$c]=1; done
+        for c in "${installed[@]}"; do has[$c]=1;  done
+
+        # Compute lists
+        local -a missing=() extras=()
+        local -A seen
+
+        for c in "${desired[@]}"; do
+          if [[ -z ${has[$c]} ]]; then
+            missing+=("$c")
+          fi
+        done
+
+        for c in "${installed[@]}"; do
+          [[ -n ${seen[$c]} ]] && continue
+          seen[$c]=1
+          [[ -z ${want[$c]} ]] && extras+=("$c")
+        done
+
+        if (( ${#missing[@]} )); then
+          echo "\n🟢 In desired but NOT installed:"
+          printf "%s\n" "${missing[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
+            print -P "%F{yellow}  $line%f"
+          done
+        fi
+
+        if (( ${#extras[@]} )); then
+          echo "\n🟢 Installed but NOT in desired:"
+          printf "%s\n" "${extras[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
+            print -P "%F{magenta}  $line%f"
+          done
+        fi
+        
         return 0
         ;;
       add|remove)
