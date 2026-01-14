@@ -35,6 +35,7 @@ spotify
 tableplus
 telegram
 the-unarchiver
+trae
 visual-studio-code
 warp
 windsurf
