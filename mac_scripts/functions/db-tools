@@ -490,20 +490,7 @@ db_tools_sync_mongodb() {
 
 # Filter function to remove debug output lines
 filter_debug() {
-    grep -v "^vps_name=" | \
-    grep -v "^user=" | \
-    grep -v "^ip=" | \
-    grep -v "^service_name=" | \
-    grep -v "^local_port=" | \
-    grep -v "^target_host=" | \
-    grep -v "^target_port=" | \
-    grep -v "^_vps_name=" | \
-    grep -v "^_user=" | \
-    grep -v "^_ip=" | \
-    grep -v "^_service_name=" | \
-    grep -v "^_local_port=" | \
-    grep -v "^_target_host=" | \
-    grep -v "^_target_port="
+    grep -Ev '^(vps_name|user|ip|service_name|local_port|target_host|target_port|_vps_name|_user|_ip|_service_name|_local_port|_target_host|_target_port)='
 }
 
 # =============================================================================
