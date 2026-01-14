@@ -177,6 +177,7 @@ show_db_tools_usage() {
     echo -e "  ${green}dbt sync ls|list${reset} [--status]              ${gray}# Show sync configurations${reset}"
     echo -e "                                             ${gray}--status: Check connection status for sync configs${reset}"
     echo -e "  ${green}dbt sync postgres${reset} -s <idx> -d <idx>      ${gray}# Sync PostgreSQL database${reset}"
+    echo -e "  ${green}dbt sync postgres${reset} ... --verbose          ${gray}# PostgreSQL sync with detailed progress${reset}"
     echo -e "  ${green}dbt sync mongodb${reset} -s <idx> -d <idx>       ${gray}# Sync MongoDB database${reset}"
     echo ""
     echo -e "${bold}${blue}SYNC FLAGS:${reset}"
@@ -193,6 +194,7 @@ show_db_tools_usage() {
     echo -e "  ${green}dbt sync ls|list${reset}                         ${gray}# List sync configurations${reset}"
     echo -e "  ${green}dbt sync ls|list --status${reset}                ${gray}# List sync configs with status${reset}"
     echo -e "  ${green}dbt sync postgres -s 1 -d 1${reset}              ${gray}# Sync PostgreSQL${reset}"
+    echo -e "  ${green}dbt sync postgres -s 1 -d 1 --verbose${reset}    ${gray}# Sync PostgreSQL with detailed progress${reset}"
     echo -e "  ${green}dbt sync postgres -s 1 -db 1 -d 2${reset}        ${gray}# Sync PostgreSQL with database${reset}"
     echo -e "  ${green}dbt sync mongodb -s 1 -d 1${reset}               ${gray}# Sync MongoDB${reset}"
     echo ""
@@ -339,6 +341,7 @@ db_tools_sync_postgres() {
     local source_idx=""
     local db_idx=""
     local dest_idx=""
+    local verbose_mode="false"
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -354,9 +357,13 @@ db_tools_sync_postgres() {
                 dest_idx="$2"
                 shift 2
                 ;;
+            --verbose|-v)
+                verbose_mode="true"
+                shift
+                ;;
             *)
                 echo "❌ Unknown option: $1"
-                echo "💡 Use: dbt sync postgres --source <idx> --destination <idx>"
+                echo "💡 Use: dbt sync postgres --source <idx> --destination <idx> [--verbose]"
                 return 1
                 ;;
         esac
@@ -407,7 +414,7 @@ db_tools_sync_postgres() {
     echo "  To: ${dest_name}"
     echo ""
     
-    perform_postgres_sync "$source_url" "$source_db" "$dest_url"
+    perform_postgres_sync "$source_url" "$source_db" "$dest_url" "false" "$verbose_mode"
 }
 
 db_tools_sync_mongodb() {
@@ -1294,12 +1301,41 @@ _find_pg18_version() {
     fi
 }
 
+sync_spinner_start() {
+    local message="$1"
+    local pid_var_name="$2"
+    
+    (
+        local frames=('|' '/' '-' '\')
+        local idx=1
+        local count=${#frames[@]}
+        while true; do
+            printf "\r%s %s" "$message" "${frames[idx]}"
+            idx=$(( idx % count + 1 ))
+            sleep 0.2
+        done
+    ) &
+    
+    eval "${pid_var_name}=$!"
+}
+
+sync_spinner_stop() {
+    local spinner_pid="$1"
+    
+    if [[ -n "$spinner_pid" ]]; then
+        kill "$spinner_pid" >/dev/null 2>&1 || true
+        wait "$spinner_pid" >/dev/null 2>&1 || true
+        printf "\r"
+    fi
+}
+
 # Function to perform PostgreSQL sync
 perform_postgres_sync() {
     local src_url="$1"
     local src_db="$2"
     local tgt_url="$3"
-    local quiet_mode="${4:-false}"  # Optional 4th parameter for quiet mode
+    local quiet_mode="${4:-false}"   # Optional 4th parameter for quiet mode
+    local verbose_mode="${5:-false}" # Optional 5th parameter for verbose mode
     
     # Parse URLs
     _parse_postgres_url "$src_url" "src"
@@ -1327,6 +1363,16 @@ perform_postgres_sync() {
     local pg_dump_bin="$pg_dump_path"
     local pg_restore_bin="/opt/homebrew/opt/postgresql@${pg_version}/bin/pg_restore"
     
+    # Extra args for verbose mode
+    local pg_dump_args=()
+    local pg_restore_args=()
+    local psql_restore_args=()
+    
+    if [[ "$verbose_mode" == "true" ]]; then
+        pg_dump_args+=("-v")
+        pg_restore_args+=("--verbose")
+    fi
+    
     # Only show header in non-quiet mode
     if [[ "$quiet_mode" != "true" ]]; then
         echo "====================================="
@@ -1336,21 +1382,27 @@ perform_postgres_sync() {
         echo "-------------------------------------"
     fi
     
-    # 1) Terminate active connections on target (silent)
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "🔧 Terminating active connections on target..."
+    fi
     _exec_psql "$tgt_sslmode" \
         env PGPASSWORD="${tgt_pass}" "$psql_bin" \
         -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
         -t -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${src_db}' AND pid <> pg_backend_pid();" \
         >/dev/null 2>&1 || true
     
-    # 2) Drop target DB if it exists (silent)
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "🧹 Dropping target database if it exists..."
+    fi
     _exec_psql "$tgt_sslmode" \
         env PGPASSWORD="${tgt_pass}" "$psql_bin" \
         -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
         -c "DROP DATABASE IF EXISTS \"${src_db}\";" \
         >/dev/null 2>&1 || true
     
-    # 3) Create fresh target DB (capture errors)
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "🆕 Creating fresh target database..."
+    fi
     local create_error=$(
         _exec_psql "$tgt_sslmode" \
             env PGPASSWORD="${tgt_pass}" "$psql_bin" \
@@ -1367,11 +1419,17 @@ perform_postgres_sync() {
         return 1
     fi
     
-    # 4) Dump from source and restore into target
-    [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database..."
-    
-    # Detect target PostgreSQL version to handle compatibility
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "� Detecting target PostgreSQL version..."
+    fi
     local tgt_version=$(env PGPASSWORD="${tgt_pass}" "$psql_bin" -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres -t -c "SELECT version();" 2>/dev/null | grep -oE "PostgreSQL [0-9]+" | grep -oE "[0-9]+" | head -1)
+    
+    local sync_spinner_pid=""
+    if [[ "$quiet_mode" != "true" ]] && [[ "$verbose_mode" != "true" ]]; then
+        sync_spinner_start "📤 Syncing database..." sync_spinner_pid
+    else
+        [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database..."
+    fi
     
     # Capture errors from both dump and restore
     local dump_error_file=$(mktemp)
@@ -1383,25 +1441,50 @@ perform_postgres_sync() {
     
     if [[ -n "$tgt_version" ]] && [[ "$tgt_version" -le 16 ]]; then
         # Use SQL format and filter out PostgreSQL 17+ specific parameters
-        env PGPASSWORD="${src_pass}" "$pg_dump_bin" \
+        env PGPASSWORD="${src_pass}" "$pg_dump_bin" "${pg_dump_args[@]}" \
             -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" \
-            --no-owner --no-acl --clean --if-exists 2>"$dump_error_file" \
+            --no-owner --no-acl --clean --if-exists 2> >(tee "$dump_error_file" >&2) \
         | grep -v "transaction_timeout" \
         | grep -v "ALTER DATABASE.*SET transaction_timeout" \
-        | _exec_psql "$tgt_sslmode" \
-            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
-            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${src_db}" \
-            -q 2>"$restore_error_file" >/dev/null
+        | {
+            # Build psql restore args
+            psql_restore_args=( \
+                -h "${tgt_host}" \
+                -p "${tgt_port}" \
+                -U "${tgt_user}" \
+                -d "${src_db}" \
+            )
+            if [[ "$verbose_mode" != "true" ]]; then
+                psql_restore_args+=("-q")
+            fi
+            _exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$psql_bin" "${psql_restore_args[@]}" \
+                2> >(tee "$restore_error_file" >&2) >/dev/null
+        }
         sync_result=$?
     else
         # Use custom format for PostgreSQL 17+ targets
-        env PGPASSWORD="${src_pass}" "$pg_dump_bin" \
-            -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" -Fc 2>"$dump_error_file" \
-        | _exec_psql "$tgt_sslmode" \
-            env PGPASSWORD="${tgt_pass}" "$pg_restore_bin" \
-            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${src_db}" \
-            --clean --if-exists --no-owner --no-acl 2>"$restore_error_file" >/dev/null
+        env PGPASSWORD="${src_pass}" "$pg_dump_bin" "${pg_dump_args[@]}" \
+            -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" -Fc 2> >(tee "$dump_error_file" >&2) \
+        | {
+            # Build pg_restore args
+            pg_restore_args+=( \
+                -h "${tgt_host}" \
+                -p "${tgt_port}" \
+                -U "${tgt_user}" \
+                -d "${src_db}" \
+                --clean --if-exists --no-owner --no-acl \
+            )
+            _exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$pg_restore_bin" "${pg_restore_args[@]}" \
+                2> >(tee "$restore_error_file" >&2) >/dev/null
+        }
         sync_result=$?
+    fi
+    
+    if [[ -n "$sync_spinner_pid" ]]; then
+        sync_spinner_stop "$sync_spinner_pid"
+        echo ""
     fi
     
     if [ $sync_result -eq 0 ]; then
@@ -1607,31 +1690,44 @@ perform_mongo_sync() {
         echo "-------------------------------------"
     fi
     
-    # Test connections (pass quiet mode to test function)
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "🔍 Testing source connection..."
+    fi
     if ! test_mongo_connection "${source_uri}" "${source_name}" "$quiet_mode"; then
         [[ "$quiet_mode" != "true" ]] && echo "❌ Cannot proceed - source connection failed"
         return 1
     fi
     
+    if [[ "$quiet_mode" != "true" ]]; then
+        echo "🔍 Testing target connection..."
+    fi
     if ! test_mongo_connection "${target_uri}" "${target_name}" "$quiet_mode"; then
         [[ "$quiet_mode" != "true" ]] && echo "❌ Cannot proceed - target connection failed"
         return 1
     fi
     
-    [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database..."
+    local mongo_spinner_pid=""
+    if [[ "$quiet_mode" != "true" ]]; then
+        sync_spinner_start "📤 Syncing database..." mongo_spinner_pid
+    fi
     
     # Perform the sync (capture errors)
     local mongo_error_file=$(mktemp)
     
     if [[ "$quiet_mode" == "true" ]]; then
-        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2>"$mongo_error_file" \
-        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2>>"$mongo_error_file"
+        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2> >(tee "$mongo_error_file" >&2) \
+        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2> >(tee -a "$mongo_error_file" >&2)
     else
-        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2>"$mongo_error_file" \
-        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2>>"$mongo_error_file"
+        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2> >(tee "$mongo_error_file" >&2) \
+        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2> >(tee -a "$mongo_error_file" >&2)
     fi
     
     local sync_result=$?
+    
+    if [[ -n "$mongo_spinner_pid" ]]; then
+        sync_spinner_stop "$mongo_spinner_pid"
+        echo ""
+    fi
     
     if [ $sync_result -eq 0 ]; then
         [[ "$quiet_mode" != "true" ]] && echo "✅ MongoDB synced successfully"
