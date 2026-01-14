@@ -9,6 +9,7 @@ bruno
 chatgpt
 claude
 claude-code
+coderabbit
 cursor
 figma
 firefox
