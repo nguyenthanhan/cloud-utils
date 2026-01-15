@@ -1420,9 +1420,12 @@ perform_postgres_sync() {
     fi
     
     if [[ "$quiet_mode" != "true" ]]; then
-        echo "� Detecting target PostgreSQL version..."
+        echo "🔍 Detecting target PostgreSQL version..."
     fi
     local tgt_version=$(env PGPASSWORD="${tgt_pass}" "$psql_bin" -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres -t -c "SELECT version();" 2>/dev/null | grep -oE "PostgreSQL [0-9]+" | grep -oE "[0-9]+" | head -1)
+    if [[ "$quiet_mode" != "true" ]] && [[ -n "$tgt_version" ]]; then
+        echo "   Target version: ${tgt_version}"
+    fi
     
     local sync_spinner_pid=""
     if [[ "$quiet_mode" != "true" ]] && [[ "$verbose_mode" != "true" ]]; then
