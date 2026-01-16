@@ -424,6 +424,7 @@ db_tools_sync_mongodb() {
     local source_idx=""
     local db_idx=""
     local dest_idx=""
+    local verbose_mode="false"
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -439,9 +440,13 @@ db_tools_sync_mongodb() {
                 dest_idx="$2"
                 shift 2
                 ;;
+            --verbose|-v)
+                verbose_mode="true"
+                shift
+                ;;
             *)
                 echo "❌ Unknown option: $1"
-                echo "💡 Use: dbt sync mongodb --source <idx> --destination <idx>"
+                echo "💡 Use: dbt sync mongodb --source <idx> --destination <idx> [--verbose]"
                 return 1
                 ;;
         esac
@@ -492,7 +497,7 @@ db_tools_sync_mongodb() {
     echo "  To: ${dest_name} → Database: ${source_db}"
     echo ""
     
-    perform_mongo_sync "$source_uri" "$source_db" "${source_name}" "$dest_uri" "${dest_name}"
+    perform_mongo_sync "$source_uri" "$source_db" "${source_name}" "$dest_uri" "${dest_name}" "false" "$verbose_mode"
 }
 
 # Filter function to remove debug output lines
@@ -1301,31 +1306,34 @@ _find_pg18_version() {
     fi
 }
 
-sync_spinner_start() {
+sync_dots_start() {
     local message="$1"
     local pid_var_name="$2"
     
     (
-        local frames=('|' '/' '-' '\')
+        local frames=('.  ' '.. ' '...')
         local idx=1
         local count=${#frames[@]}
+        # Hide cursor to prevent flickering
+        printf '\033[?25l'
         while true; do
-            printf "\r%s %s" "$message" "${frames[idx]}"
+            printf "\r%s%s" "$message" "${frames[$idx]}"
             idx=$(( idx % count + 1 ))
-            sleep 0.2
+            sleep 0.5
         done
     ) &
     
     eval "${pid_var_name}=$!"
 }
 
-sync_spinner_stop() {
+sync_dots_stop() {
     local spinner_pid="$1"
     
     if [[ -n "$spinner_pid" ]]; then
         kill "$spinner_pid" >/dev/null 2>&1 || true
         wait "$spinner_pid" >/dev/null 2>&1 || true
-        printf "\r"
+        # Show cursor again and clear the line
+        printf '\033[?25h\r'
     fi
 }
 
@@ -1420,18 +1428,26 @@ perform_postgres_sync() {
     fi
     
     if [[ "$quiet_mode" != "true" ]]; then
-        echo "🔍 Detecting target PostgreSQL version..."
-    fi
-    local tgt_version=$(env PGPASSWORD="${tgt_pass}" "$psql_bin" -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres -t -c "SELECT version();" 2>/dev/null | grep -oE "PostgreSQL [0-9]+" | grep -oE "[0-9]+" | head -1)
-    if [[ "$quiet_mode" != "true" ]] && [[ -n "$tgt_version" ]]; then
-        echo "   Target version: ${tgt_version}"
+        echo "🔍 Detecting database versions..."
     fi
     
-    local sync_spinner_pid=""
+    # Detect source version
+    local src_version=$(env PGPASSWORD="${src_pass}" "$psql_bin" -h "${src_host}" -p "${src_port}" -U "${src_user}" -d postgres -t -c "SELECT version();" 2>/dev/null | grep -oE "PostgreSQL [0-9]+" | grep -oE "[0-9]+" | head -1)
+    if [[ "$quiet_mode" != "true" ]] && [[ -n "$src_version" ]]; then
+        echo "   Source version: PostgreSQL ${src_version}"
+    fi
+    
+    # Detect target version
+    local tgt_version=$(env PGPASSWORD="${tgt_pass}" "$psql_bin" -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres -t -c "SELECT version();" 2>/dev/null | grep -oE "PostgreSQL [0-9]+" | grep -oE "[0-9]+" | head -1)
+    if [[ "$quiet_mode" != "true" ]] && [[ -n "$tgt_version" ]]; then
+        echo "   Target version: PostgreSQL ${tgt_version}"
+    fi
+    
+    local sync_dots_pid=""
     if [[ "$quiet_mode" != "true" ]] && [[ "$verbose_mode" != "true" ]]; then
-        sync_spinner_start "📤 Syncing database..." sync_spinner_pid
+        sync_dots_start "📤 Syncing database" sync_dots_pid
     else
-        [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database..."
+        [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database"
     fi
     
     # Capture errors from both dump and restore
@@ -1485,8 +1501,8 @@ perform_postgres_sync() {
         sync_result=$?
     fi
     
-    if [[ -n "$sync_spinner_pid" ]]; then
-        sync_spinner_stop "$sync_spinner_pid"
+    if [[ -n "$sync_dots_pid" ]]; then
+        sync_dots_stop "$sync_dots_pid"
         echo ""
     fi
     
@@ -1682,7 +1698,8 @@ perform_mongo_sync() {
     local source_name="$3"
     local target_uri="$4"
     local target_name="$5"
-    local quiet_mode="${6:-false}"  # Optional 6th parameter for quiet mode
+    local quiet_mode="${6:-false}"   # Optional 6th parameter for quiet mode
+    local verbose_mode="${7:-false}"  # Optional 7th parameter for verbose mode
     
     # Only show header in non-quiet mode
     if [[ "$quiet_mode" != "true" ]]; then
@@ -1709,26 +1726,53 @@ perform_mongo_sync() {
         return 1
     fi
     
-    local mongo_spinner_pid=""
+    # Detect MongoDB versions
     if [[ "$quiet_mode" != "true" ]]; then
-        sync_spinner_start "📤 Syncing database..." mongo_spinner_pid
+        echo "🔍 Detecting database versions..."
+        
+        # Detect source version
+        if command -v mongosh >/dev/null 2>&1; then
+            local src_version=$(mongosh "${source_uri}" --quiet --eval "db.version()" 2>/dev/null | tail -1)
+            [[ -n "$src_version" ]] && echo "   Source version: MongoDB ${src_version}"
+        elif command -v mongo >/dev/null 2>&1; then
+            local src_version=$(mongo "${source_uri}" --quiet --eval "db.version()" 2>/dev/null | tail -1)
+            [[ -n "$src_version" ]] && echo "   Source version: MongoDB ${src_version}"
+        fi
+        
+        # Detect target version
+        if command -v mongosh >/dev/null 2>&1; then
+            local tgt_version=$(mongosh "${target_uri}" --quiet --eval "db.version()" 2>/dev/null | tail -1)
+            [[ -n "$tgt_version" ]] && echo "   Target version: MongoDB ${tgt_version}"
+        elif command -v mongo >/dev/null 2>&1; then
+            local tgt_version=$(mongo "${target_uri}" --quiet --eval "db.version()" 2>/dev/null | tail -1)
+            [[ -n "$tgt_version" ]] && echo "   Target version: MongoDB ${tgt_version}"
+        fi
+    fi
+    
+    local mongo_dots_pid=""
+    if [[ "$quiet_mode" != "true" ]] && [[ "$verbose_mode" != "true" ]]; then
+        sync_dots_start "📤 Syncing database" mongo_dots_pid
+    else
+        [[ "$quiet_mode" != "true" ]] && echo "📤 Syncing database"
     fi
     
     # Perform the sync (capture errors)
     local mongo_error_file=$(mktemp)
     
-    if [[ "$quiet_mode" == "true" ]]; then
+    if [[ "$verbose_mode" == "true" ]]; then
+        # Verbose mode: show all output
         mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2> >(tee "$mongo_error_file" >&2) \
         | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2> >(tee -a "$mongo_error_file" >&2)
     else
-        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2> >(tee "$mongo_error_file" >&2) \
-        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2> >(tee -a "$mongo_error_file" >&2)
+        # Non-verbose mode: hide output, only capture errors
+        mongodump --uri="${source_uri}" --db="${source_db}" --archive --gzip 2>"$mongo_error_file" \
+        | mongorestore --uri="${target_uri}" --drop --archive --gzip --nsFrom="${source_db}.*" --nsTo="${source_db}.*" 2>>"$mongo_error_file" >/dev/null
     fi
     
     local sync_result=$?
     
-    if [[ -n "$mongo_spinner_pid" ]]; then
-        sync_spinner_stop "$mongo_spinner_pid"
+    if [[ -n "$mongo_dots_pid" ]]; then
+        sync_dots_stop "$mongo_dots_pid"
         echo ""
     fi
     

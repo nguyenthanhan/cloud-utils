@@ -48,18 +48,22 @@ brew_upgrade_casks() {
         action="list"
         shift
         ;;
-      help)
-        echo "Usage: brew_upgrade_casks [COMMAND] [OPTIONS]"
+      -h|--help)
+        echo "Usage: buc [COMMAND] [OPTIONS]"
+        echo "       brew_upgrade_casks [COMMAND] [OPTIONS]"
+        echo ""
         echo "Commands:"
         echo "  add <cask>         Add cask to desired list"
         echo "  remove <cask>      Remove cask from desired list"
         echo "  ls, list           Show current desired casks"
-        echo "  help               Show this help message"
+        echo ""
+        echo "Options:"
+        echo "  -h, --help         Show this help message"
         return 0
         ;;
       *)
         print -P "%F{red}❌ Unknown command: $1%f"
-        echo "Use 'help' for usage information"
+        echo "Use '-h' or '--help' for usage information"
         return 1
         ;;
     esac

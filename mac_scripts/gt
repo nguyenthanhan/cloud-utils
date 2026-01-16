@@ -2,7 +2,7 @@
 
 # File: mac_scripts/gt
 # Git tool with the following commands:
-#   gt fp              - Force push (safe with --force-with-lease)
+#   gt push              - Force push (safe with --force-with-lease)
 #   gt fetch [branch]  - Fetch specified branch, or both main and develop if no argument
 #   gt clean [--force] - Clean up gone branches (use --force to force delete)
 
