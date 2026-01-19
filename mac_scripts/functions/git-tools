@@ -1,4 +1,3 @@
-
 # Check if we're in a git repository
 _git_check_repo() {
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -30,218 +29,140 @@ git_safe_force_push() {
     fi
 }
 
-# Function 2: Fetch specified branch, or both main and develop if no argument
-git_fetch() {
-    if ! _git_check_repo; then
-        return 1
-    fi
-    
-    local fetch_attempted=false
-    local fetch_success=false
-    
-    echo "--- ⬇️ Fetching branches ---"
-    
-    # Helper function to fetch a branch
-    _fetch_branch() {
-        local branch_name="$1"
-        local local_name="$2"
-        
-        if [ -z "$local_name" ]; then
-            local_name="$branch_name"
-        fi
-        
-        if git ls-remote --heads origin "$branch_name" > /dev/null 2>&1; then
-            fetch_attempted=true
-            echo "--- Fetching $branch_name..."
-            if git fetch origin "$branch_name:$local_name" 2>/dev/null; then
-                echo "--- ✅ Fetched $branch_name successfully"
-                fetch_success=true
-                return 0
-            else
-                echo "--- ❌ Failed to fetch $branch_name"
-                return 1
-            fi
-        else
-            echo "--- ⏭️ Skipped: $branch_name not found on remote"
-            return 1
-        fi
-    }
-    
-    # If no argument, fetch both main and develop
-    if [ -z "$1" ]; then
-        # Try main (or master as fallback)
-        if git ls-remote --heads origin main > /dev/null 2>&1; then
-            _fetch_branch "main" "main"
-        elif git ls-remote --heads origin master > /dev/null 2>&1; then
-            _fetch_branch "master" "main"
-        else
-            echo "--- ⏭️ Skipped: main/master not found on remote"
-        fi
-        
-        # Try develop
-        _fetch_branch "develop" "develop"
-    else
-        # Fetch the specified branch
-        _fetch_branch "$1" "$1"
-    fi
-    
-    # Always run cleanup
-    _git_clean_gone
-    
-    # Check if we're on develop or main and pull latest changes
-    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-    if [ "$current_branch" = "develop" ] || [ "$current_branch" = "main" ]; then
-        echo "--- 🔄 Pulling latest changes for $current_branch..."
-        if ! git pull; then
-            echo "--- ⚠️ First pull attempt failed, trying with explicit origin/$current_branch..."
-            if ! git pull origin "$current_branch"; then
-                echo "--- ❌ Pull failed for $current_branch"
-                echo "--- ℹ️  Run 'git status' to check for local changes or conflicts"
-                echo "--- ℹ️  You might need to stash your changes or resolve conflicts"
-            else
-                echo "--- ✅ Pull successful for origin/$current_branch"
-            fi
-        else
-            echo "--- ✅ Pull successful for $current_branch"
-        fi
-    fi
-    
-    if [ "$fetch_success" = true ]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Core cleanup function (internal)
-_git_clean_gone() {
-    echo "--- 🧹 Fetching & Pruning ---"
-    
-    if git fetch --all --prune 2>/dev/null; then
-        echo "--- ✅ Fetch & prune successful"
-    else
-        echo "--- ❌ Failed to fetch/prune"
-        return 1
-    fi
-    
-    # Find 'gone' branches BUT exclude current branch (line starts with *)
-    branches=$(git branch -vv | grep ': gone]' | grep -v '^*' | awk '{print $1}')
-    
-    if [ -z "$branches" ]; then
-        echo "--- ✅ Clean! No branches to delete (or you are on that branch)."
-        return 0
-    fi
-    
-    echo "--- Found branches to delete: $branches"
-    
-    # Try soft delete first, then force if needed
-    failed_branches=""
-    for branch in $(echo "$branches"); do
-        if git branch -d "$branch" 2>/dev/null; then
-            echo "--- ✅ Deleted: $branch"
-        else
-            failed_branches="$failed_branches $branch"
-        fi
-    done
-    
-    # If there are failed branches, offer to force delete
-    if [ -n "$failed_branches" ]; then
-        echo "--- ⚠️ Some branches couldn't be deleted (may not be merged):"
-        echo "$failed_branches"
-        echo "--- 💡 Tip: Use 'gt clean --force' to force delete them"
-    fi
-}
-
-# Cleanup command (can be called directly)
-git_clean() {
-    if ! _git_check_repo; then
-        return 1
-    fi
-    
-    local force_delete=false
-    if [[ "$1" == "--force" ]] || [[ "$1" == "-f" ]]; then
-        force_delete=true
-    fi
-    
-    echo "--- 🧹 Cleaning up gone branches ---"
-    if git fetch --all --prune 2>/dev/null; then
-        echo "--- ✅ Fetch & prune successful"
-    else
-        echo "--- ❌ Failed to fetch/prune"
-    fi
-    
-    branches=$(git branch -vv | grep ': gone]' | grep -v '^*' | awk '{print $1}')
-    
-    if [ -z "$branches" ]; then
-        echo "--- ✅ Clean! No branches to delete."
-        return 0
-    fi
-    
-    echo "--- Found branches to delete: $branches"
-    
-    for branch in $(echo "$branches"); do
-        if [ "$force_delete" = true ]; then
-            if git branch -D "$branch" 2>/dev/null; then
-                echo "--- ✅ Force deleted: $branch"
-            else
-                echo "--- ❌ Failed to delete: $branch"
-            fi
-        else
-            if git branch -d "$branch" 2>/dev/null; then
-                echo "--- ✅ Deleted: $branch"
-            else
-                echo "--- ⚠️ Skipped (not merged): $branch (use --force to delete)"
-            fi
-        fi
-    done
-}
-
-# Function 3: Sync fork with upstream
-git_sync_upstream() {
-    if ! _git_check_repo; then
-        return 1
-    fi
-    
-    echo "--- 🔄 Syncing fork with upstream ---"
-    
+# Helper function to sync with upstream
+_sync_with_upstream() {
     # Check if upstream remote exists
     if ! git remote get-url upstream > /dev/null 2>&1; then
-        echo "--- ❌ No upstream remote found"
-        echo "--- 💡 To add upstream: git remote add upstream <original-repo-url>"
-        echo "--- 💡 Example: git remote add upstream https://github.com/original/repo.git"
-        return 1
-    fi
-    
-    # Fetch from upstream
-    echo "--- ⬇️ Fetching from upstream..."
-    if git fetch upstream 2>/dev/null; then
-        echo "--- ✅ Fetched from upstream successfully"
-    else
-        echo "--- ❌ Failed to fetch from upstream"
         return 1
     fi
     
     # Get current branch
     local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     
-    # If on main/master, merge upstream changes
-    if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
-        echo "--- 🔄 Merging upstream/$current_branch into $current_branch..."
-        if git merge "upstream/$current_branch" 2>/dev/null; then
-            echo "--- ✅ Merged upstream changes successfully"
-        else
-            echo "--- ❌ Merge failed - there might be conflicts"
-            echo "--- 💡 Resolve conflicts manually, then run 'git add .' and 'git commit'"
-            return 1
+    # If on main, merge upstream changes
+    if [ "$current_branch" = "main" ]; then
+        # Check if upstream main branch exists
+        if git ls-remote --heads upstream main > /dev/null 2>&1; then
+            # Check for uncommitted changes
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+                echo "--- ⚠️ You have uncommitted changes. Skipping upstream merge."
+                echo "--- 💡 Commit or stash your changes, then run 'gt fetch' again to merge upstream"
+                return 0
+            fi
+            
+            echo "--- 🔄 Merging upstream/main into main..."
+            if git merge "upstream/main" --no-edit 2>/dev/null; then
+                echo "--- ✅ Merged upstream changes successfully"
+                
+                # Push the updated main to origin
+                echo "--- 🔄 Pushing updated main to origin..."
+                if git push origin main 2>/dev/null; then
+                    echo "--- ✅ Pushed updated main to origin"
+                else
+                    echo "--- ⚠️ Failed to push to origin, but local merge was successful"
+                fi
+            else
+                echo "--- ❌ Merge failed - there might be conflicts"
+                echo "--- 💡 Resolve conflicts manually, then run 'git add .' and 'git commit'"
+                return 1
+            fi
         fi
-    else
-        echo "--- ℹ️ Not on main/master branch. To merge upstream changes:"
-        echo "--- 💡 git checkout main  # or master"
-        echo "--- 💡 git merge upstream/main  # or upstream/master"
     fi
     
     return 0
 }
+
+# Helper function to fetch and prune
+_git_fetch_and_prune() {
+    echo "--- ⬇️ Fetching from all remotes..."
+    if git fetch --all --prune 2>/dev/null; then
+        echo "--- ✅ Fetch & prune successful"
+        return 0
+    else
+        echo "--- ❌ Failed to fetch/prune"
+        return 1
+    fi
+}
+
+# Helper function to clean up gone branches
+_cleanup_gone_branches() {
+    local branches=$(git branch -vv | grep ': gone]' | grep -v '^*' | awk '{print $1}')
+    
+    if [ -z "$branches" ]; then
+        return 0
+    fi
+    
+    echo "--- 🧹 Cleaning gone branches: $branches"
+    for branch in $(echo "$branches"); do
+        if git branch -d "$branch" 2>/dev/null; then
+            echo "--- ✅ Deleted: $branch"
+        else
+            echo "--- ⚠️ Skipped (not merged): $branch"
+        fi
+    done
+}
+
+# Helper function to get current branch
+_get_current_branch() {
+    git rev-parse --abbrev-ref HEAD 2>/dev/null
+}
+
+# Helper function to check if branch should auto-sync
+_should_auto_sync() {
+    local branch="$1"
+    [ "$branch" = "main" ] || [ "$branch" = "develop" ]
+}
+
+# Helper function to sync current branch with origin
+_sync_with_origin() {
+    local branch="$1"
+    
+    echo "--- 🔄 Syncing $branch branch..."
+    if git pull origin "$branch" 2>/dev/null; then
+        echo "--- ✅ Pulled from origin/$branch"
+        return 0
+    else
+        echo "--- ❌ Pull failed - check for uncommitted changes"
+        return 1
+    fi
+}
+
+# Function 2: Fetch and sync repository
+git_fetch() {
+    if ! _git_check_repo; then
+        return 1
+    fi
+    
+    echo "--- ⬇️ Fetching and syncing repository ---"
+    
+    # Step 1: Fetch and prune
+    if ! _git_fetch_and_prune; then
+        return 1
+    fi
+    
+    # Step 2: Clean up gone branches
+    _cleanup_gone_branches
+    
+    # Step 3: Get current branch and decide sync strategy
+    local current_branch=$(_get_current_branch)
+    
+    if _should_auto_sync "$current_branch"; then
+        # Step 4: Sync with origin
+        if ! _sync_with_origin "$current_branch"; then
+            return 1
+        fi
+        
+        # Step 5: If on main, also sync with upstream
+        if [ "$current_branch" = "main" ]; then
+            _sync_with_upstream
+        fi
+    else
+        echo "--- ℹ️ On branch '$current_branch' - no auto-sync performed"
+    fi
+    
+    return 0
+}
+
 
 # Main function gt
 gt() {
@@ -250,9 +171,7 @@ gt() {
         echo ""
         echo "Available commands:"
         echo "  push   - Force push (safe)"
-        echo "  fetch  - Fetch branch, or both main and develop if no argument"
-        echo "  sync   - Sync fork with upstream"
-        echo "  clean  - Clean up gone branches (use --force to force delete)"
+        echo "  fetch  - Fetch and sync repository"
         return 1
     fi
     
@@ -267,20 +186,12 @@ gt() {
         fetch)
             git_fetch "$@"
             ;;
-        sync)
-            git_sync_upstream "$@"
-            ;;
-        clean)
-            git_clean "$@"
-            ;;
         *)
             echo "❌ Unknown command: $COMMAND"
             echo ""
             echo "Available commands:"
             echo "  push   - Force push (safe)"
-            echo "  fetch  - Fetch branch, or both main and develop if no argument"
-            echo "  sync   - Sync fork with upstream"
-            echo "  clean  - Clean up gone branches (use --force to force delete)"
+            echo "  fetch  - Fetch and sync repository"
             return 1
             ;;
     esac
