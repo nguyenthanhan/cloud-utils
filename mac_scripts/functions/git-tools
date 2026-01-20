@@ -75,7 +75,7 @@ _sync_with_upstream() {
 # Helper function to fetch and prune
 _git_fetch_and_prune() {
     echo "--- ⬇️ Fetching from all remotes..."
-    if git fetch --all --prune 2>/dev/null; then
+    if git fetch --all --prune; then
         echo "--- ✅ Fetch & prune successful"
         return 0
     else
@@ -132,7 +132,7 @@ _fetch_main_develop() {
     for branch in main develop; do
         if git ls-remote --heads origin "$branch" > /dev/null 2>&1; then
             echo "--- ⬇️ Fetching origin/$branch without checkout..."
-            if git fetch origin "$branch:$branch" 2>/dev/null; then
+            if git fetch origin "$branch:$branch"; then
                 echo "--- ✅ Successfully updated local $branch from origin/$branch"
             else
                 echo "--- ⚠️ Failed to fetch origin/$branch"
@@ -150,13 +150,13 @@ git_fetch() {
     
     echo "--- ⬇️ Fetching and syncing repository ---"
     
-    # Step 1: Fetch and prune
+    # Step 1: Fetch main/develop without checkout
+    _fetch_main_develop
+    
+    # Step 2: Fetch and prune
     if ! _git_fetch_and_prune; then
         return 1
     fi
-    
-    # Step 2: Fetch main/develop without checkout
-    _fetch_main_develop
     
     # Step 3: Clean up gone branches
     _cleanup_gone_branches
