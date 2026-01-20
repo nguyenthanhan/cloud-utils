@@ -127,6 +127,21 @@ _sync_with_origin() {
     fi
 }
 
+# Helper function to fetch main/develop branch without checkout
+_fetch_main_develop() {
+    for branch in main develop; do
+        if git ls-remote --heads origin "$branch" > /dev/null 2>&1; then
+            echo "--- ⬇️ Fetching origin/$branch without checkout..."
+            if git fetch origin "$branch:$branch" 2>/dev/null; then
+                echo "--- ✅ Successfully updated local $branch from origin/$branch"
+            else
+                echo "--- ⚠️ Failed to fetch origin/$branch"
+            fi
+            return 0
+        fi
+    done
+}
+
 # Function 2: Fetch and sync repository
 git_fetch() {
     if ! _git_check_repo; then
@@ -140,19 +155,22 @@ git_fetch() {
         return 1
     fi
     
-    # Step 2: Clean up gone branches
+    # Step 2: Fetch main/develop without checkout
+    _fetch_main_develop
+    
+    # Step 3: Clean up gone branches
     _cleanup_gone_branches
     
-    # Step 3: Get current branch and decide sync strategy
+    # Step 4: Get current branch and decide sync strategy
     local current_branch=$(_get_current_branch)
     
     if _should_auto_sync "$current_branch"; then
-        # Step 4: Sync with origin
+        # Step 5: Sync with origin
         if ! _sync_with_origin "$current_branch"; then
             return 1
         fi
         
-        # Step 5: If on main, also sync with upstream
+        # Step 6: If on main, also sync with upstream
         if [ "$current_branch" = "main" ]; then
             _sync_with_upstream
         fi
