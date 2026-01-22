@@ -784,7 +784,7 @@ configure_ssh_security() {
   
   # Configure SSH security settings
   # Disable root login
-  sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
   
   # Disable password authentication (KEY ONLY!)
   sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
