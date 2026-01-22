@@ -1430,28 +1430,6 @@ perform_postgres_sync() {
             local timestamp=$(date +%Y%m%d_%H%M%S)
             backup_db_name="${tgt_db_name}_backup_${timestamp}"
             
-            # Clean up old backups (keep only last 3)
-            if [[ "$quiet_mode" != "true" ]]; then
-                echo "🧹 Cleaning up old backups (keeping last 3)..."
-            fi
-            local old_backups=$(_exec_psql "$tgt_sslmode" \
-                env PGPASSWORD="${tgt_pass}" "$psql_bin" \
-                -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
-                -t -c "SELECT datname FROM pg_database WHERE datname LIKE '${tgt_db_name}_backup_%' ORDER BY datname DESC OFFSET 3;" \
-                2>/dev/null)
-            
-            if [[ -n "$old_backups" ]]; then
-                while IFS= read -r old_backup; do
-                    [[ -z "$old_backup" ]] && continue
-                    old_backup=$(echo "$old_backup" | tr -d ' ')
-                    _exec_psql "$tgt_sslmode" \
-                        env PGPASSWORD="${tgt_pass}" "$psql_bin" \
-                        -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
-                        -c "DROP DATABASE IF EXISTS \"${old_backup}\";" \
-                        >/dev/null 2>&1 || true
-                done <<< "$old_backups"
-            fi
-            
             if [[ "$quiet_mode" != "true" ]]; then
                 echo "💾 Backing up existing database '${tgt_db_name}' to '${backup_db_name}'..."
             fi
