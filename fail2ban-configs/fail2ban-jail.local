@@ -10,7 +10,7 @@ enabled = true
 port = ssh
 filter = sshd
 logpath = /var/log/auth.log
-maxretry = 3
+maxretry = 5
 bantime = 86400
 findtime = 600
 
@@ -22,15 +22,3 @@ logpath = /var/log/fail2ban.log
 bantime = 2592000
 findtime = 604800
 maxretry = 2
-
-# GeoIP-based blocking - blocks connections from specific countries
-# Countries blocked: CN (China), RU (Russia), KP (North Korea)
-[geoip-block]
-enabled = true
-port = ssh
-filter = geoip-block
-action = geoip-action[name=geoip-block, port=ssh, protocol=tcp]
-logpath = /var/log/auth.log
-maxretry = 1
-bantime = -1
-findtime = 600

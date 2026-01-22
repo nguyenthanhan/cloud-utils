@@ -805,7 +805,7 @@ configure_ssh_security() {
 }
 
 install_fail2ban() {
-  log_info "Installing and configuring Fail2ban with GeoIP blocking..."
+  log_info "Installing and configuring Fail2ban..."
   
   # Update package list
   sudo apt-get update -y
@@ -821,46 +821,6 @@ install_fail2ban() {
   fi
   
   log_success "Fail2ban installed successfully"
-  
-  # Install GeoIP2 tools (modern replacement for deprecated GeoIP Legacy)
-  log_info "Installing GeoIP2 tools and database..."
-  
-  # Install mmdb-bin for GeoIP2 lookups (replacement for geoiplookup)
-  sudo apt-get install -y mmdb-bin 2>/dev/null || true
-  
-  # Install GeoIP database update tool
-  sudo apt-get install -y geoipupdate 2>/dev/null || true
-  
-  # Download GeoLite2 Country database (free version)
-  log_info "Downloading GeoLite2 Country database..."
-  sudo mkdir -p /usr/share/GeoIP
-  
-  # Download latest GeoLite2-Country database
-  if command -v wget >/dev/null 2>&1; then
-    sudo wget -q -O /tmp/GeoLite2-Country.mmdb.tar.gz \
-      "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb.tar.gz" 2>/dev/null || \
-    sudo wget -q -O /usr/share/GeoIP/GeoLite2-Country.mmdb \
-      "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb" 2>/dev/null
-    
-    # Extract if tar.gz was downloaded
-    if [ -f /tmp/GeoLite2-Country.mmdb.tar.gz ]; then
-      sudo tar -xzf /tmp/GeoLite2-Country.mmdb.tar.gz -C /usr/share/GeoIP/ --strip-components=1 2>/dev/null || true
-      sudo rm -f /tmp/GeoLite2-Country.mmdb.tar.gz
-    fi
-  fi
-  
-  # Verify GeoIP2 database
-  if [ -f /usr/share/GeoIP/GeoLite2-Country.mmdb ]; then
-    log_success "GeoIP2 database installed successfully"
-    
-    # Test mmdblookup if available
-    if command -v mmdblookup >/dev/null 2>&1; then
-      log_success "GeoIP2 lookup tool (mmdblookup) available"
-    fi
-  else
-    log_warning "GeoIP2 database download failed, GeoIP blocking may not work"
-    log_info "You can manually download from: https://github.com/P3TERX/GeoLite.mmdb"
-  fi
   
   # Check if config files exist
   if [ ! -f "$CONFIG_DIR/fail2ban-jail.local" ]; then
@@ -899,27 +859,6 @@ install_fail2ban() {
     return 1
   fi
   
-  # Copy filters
-  if [ -f "$CONFIG_DIR/fail2ban-geoip-block.conf" ]; then
-    if sudo cp "$CONFIG_DIR/fail2ban-geoip-block.conf" /etc/fail2ban/filter.d/geoip-block.conf 2>/dev/null; then
-      log_success "Copied geoip-block.conf"
-    else
-      log_warning "Failed to copy geoip-block.conf"
-    fi
-  fi
-  
-  # Copy actions
-  if [ -f "$CONFIG_DIR/fail2ban-geoip-action.conf" ]; then
-    if sudo cp "$CONFIG_DIR/fail2ban-geoip-action.conf" /etc/fail2ban/action.d/geoip-action.conf 2>/dev/null; then
-      log_success "Copied geoip-action.conf"
-    else
-      log_warning "Failed to copy geoip-action.conf"
-    fi
-  fi
-  
-  # GeoIP blocking is already enabled in the jail.local configuration file
-  log_success "GeoIP blocking configuration applied (enabled by default in jail.local)"
-  
   # Start and enable Fail2ban
   sudo systemctl enable fail2ban
   sudo systemctl restart fail2ban
@@ -930,28 +869,14 @@ install_fail2ban() {
   # Verify installation
   if systemctl is-active --quiet fail2ban; then
     echo ""
-    log_success "Fail2ban installed and configured successfully with GeoIP2 support."
+    log_success "Fail2ban installed and configured successfully."
     echo ""
     echo "📊 Active jails:"
     sudo fail2ban-client status
     echo ""
     
-    if command -v mmdblookup >/dev/null 2>&1 && [ -f /usr/share/GeoIP/GeoLite2-Country.mmdb ]; then
-      echo "🌍 GeoIP2 Tools Installed:"
-      echo "  • mmdblookup - Modern GeoIP2 lookup tool"
-      echo "  • Database: GeoLite2-Country.mmdb"
-      echo "  • Example: mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 8.8.8.8 country iso_code"
-      echo ""
-    elif command -v geoiplookup >/dev/null 2>&1; then
-      echo "🌍 GeoIP Tools Installed (Legacy):"
-      echo "  • geoiplookup - Legacy GeoIP lookup tool"
-      echo "  • Example: geoiplookup 8.8.8.8"
-      echo ""
-    fi
-    
     echo "🔒 Security Configuration:"
-    echo "  • SSH: 3 attempts → 1 day ban"
-    echo "  • GeoIP2: Blocking CN, RU, KP (permanent ban)"
+    echo "  • SSH: 5 attempts → 1 day ban"
     echo "  • Recidive: 2 bans in 7 days → 30 day ban"
     echo ""
     echo "📁 Configuration loaded from: $CONFIG_DIR"
