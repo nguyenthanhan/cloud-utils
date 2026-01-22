@@ -9,14 +9,14 @@ typeset -g SSH_TIMEOUT=10
 
 # Find secrets file - prioritize source code root, fallback to iCloud
 find_secrets_file() {
-    # Try to find root of source code (where mac_scripts_secrets.example is located)
+    # Try to find root of source code (where dbt_secrets.example is located)
     # Start from script directory and go up to find the root
     local current_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
     local root_dir=""
     
-    # Look for mac_scripts_secrets.example to identify root
+    # Look for dbt_secrets.example to identify root
     while [[ "$current_dir" != "/" ]]; do
-        if [[ -f "$current_dir/mac_scripts_secrets.example" ]]; then
+        if [[ -f "$current_dir/dbt_secrets.example" ]]; then
             root_dir="$current_dir"
             break
         fi
@@ -24,14 +24,14 @@ find_secrets_file() {
     done
     
     # First priority: source code root
-    if [[ -n "$root_dir" ]] && [[ -f "$root_dir/mac_scripts_secrets" ]]; then
-        echo "$root_dir/mac_scripts_secrets"
+    if [[ -n "$root_dir" ]] && [[ -f "$root_dir/dbt_secrets" ]]; then
+        echo "$root_dir/dbt_secrets"
         return 0
     fi
     
     # Second priority: iCloud Drive
     local icloud_drive_root="${HOME}/Library/Mobile Documents/com~apple~CloudDocs"
-    local icloud_secrets="${icloud_drive_root}/Backups/mac_scripts_secrets"
+    local icloud_secrets="${icloud_drive_root}/Backups/dbt_secrets"
     if [[ -f "$icloud_secrets" ]]; then
         echo "$icloud_secrets"
         return 0
@@ -58,7 +58,7 @@ find_secrets_file() {
         fi
     else
         echo "⚠️  Warning: Secrets file not found"
-        echo "   Please create mac_scripts_secrets in source root or iCloud Drive"
+        echo "   Please create dbt_secrets in source root or iCloud Drive"
         typeset -a VPS_CONFIGS=()
     fi
 }
@@ -72,7 +72,7 @@ load_secrets() {
     local secrets_file
     if ! secrets_file=$(find_secrets_file 2>/dev/null); then
         echo "⚠️  Warning: Secrets file not found"
-        echo "   Please create mac_scripts_secrets in source root or iCloud Drive"
+        echo "   Please create dbt_secrets in source root or iCloud Drive"
         export VPS_CONFIGS=()
         export POSTGRES_SOURCES=()
         export POSTGRES_TARGETS=()
@@ -162,10 +162,10 @@ show_db_tools_usage() {
     echo -e "  ${green}•${reset} Synchronizing PostgreSQL and MongoDB databases"
     echo ""
     echo -e "${bold}${yellow}Secrets file lookup priority:${reset}"
-    echo -e "  ${cyan}1.${reset} Source code root (same directory as mac_scripts_secrets.example)"
-    echo -e "  ${cyan}2.${reset} iCloud Drive: ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets"
+    echo -e "  ${cyan}1.${reset} Source code root (same directory as dbt_secrets.example)"
+    echo -e "  ${cyan}2.${reset} iCloud Drive: ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/dbt_secrets"
     echo ""
-    echo -e "For secrets file format, see: ${cyan}mac_scripts_secrets.example${reset}"
+    echo -e "For secrets file format, see: ${cyan}dbt_secrets.example${reset}"
     echo ""
     echo -e "${bold}${blue}COMMANDS:${reset}"
     echo -e "  ${green}dbt connect${reset} [SERVICE]                    ${gray}# Connect to databases via SSH tunnels${reset}"
@@ -1271,16 +1271,23 @@ _parse_postgres_url() {
     local user="${auth_part%%:*}"
     local pass="${auth_part#*:}"
     
-    # Extract host and port (handle query params)
+    # Extract host, port, and database (handle query params)
     local host="${host_part%%:*}"
-    local port_and_params="${host_part#*:}"
-    local port="${port_and_params%%[?/]*}"
+    local port_and_db="${host_part#*:}"
+    local port="${port_and_db%%[/?]*}"
+    
+    # Extract database name (after / and before ?)
+    local db_part="${port_and_db#*/}"
+    local database="${db_part%%[?]*}"
+    # If no database in URL, default to postgres
+    [[ -z "$database" ]] && database="postgres"
     
     # Export variables with prefix
     eval "${prefix}_user='${user}'"
     eval "${prefix}_pass='${pass}'"
     eval "${prefix}_host='${host}'"
     eval "${prefix}_port='${port}'"
+    eval "${prefix}_database='${database}'"
 }
 
 # Helper function to execute psql command with optional SSL
@@ -1353,6 +1360,23 @@ perform_postgres_sync() {
     local tgt_sslmode="disable"
     [[ "$tgt_url" =~ sslmode=require ]] && tgt_sslmode="require"
     
+    # Check if target is Supabase (by hostname or database name)
+    local is_supabase=false
+    if echo "${tgt_host}" | grep -qiE "(supabase|supabase\.co)"; then
+        is_supabase=true
+    fi
+    
+    # Determine target database name
+    # For Supabase or if target database is "postgres", use "postgres" as target
+    # Otherwise, use source database name
+    local tgt_db_name="${src_db}"
+    if [[ "$is_supabase" == "true" ]] || [[ "${tgt_database}" == "postgres" ]]; then
+        tgt_db_name="postgres"
+        if [[ "$quiet_mode" != "true" ]]; then
+            echo "ℹ️  Target is Supabase or uses 'postgres' database - will restore to 'postgres'"
+        fi
+    fi
+    
     # Use PostgreSQL 18 client tools (backward compatible with 16, 17, 18)
     local pg_info=$(_find_pg18_version)
     
@@ -1390,41 +1414,112 @@ perform_postgres_sync() {
         echo "-------------------------------------"
     fi
     
-    if [[ "$quiet_mode" != "true" ]]; then
-        echo "🔧 Terminating active connections on target..."
-    fi
-    _exec_psql "$tgt_sslmode" \
-        env PGPASSWORD="${tgt_pass}" "$psql_bin" \
-        -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
-        -t -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${src_db}' AND pid <> pg_backend_pid();" \
-        >/dev/null 2>&1 || true
-    
-    if [[ "$quiet_mode" != "true" ]]; then
-        echo "🧹 Dropping target database if it exists..."
-    fi
-    _exec_psql "$tgt_sslmode" \
-        env PGPASSWORD="${tgt_pass}" "$psql_bin" \
-        -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
-        -c "DROP DATABASE IF EXISTS \"${src_db}\";" \
-        >/dev/null 2>&1 || true
-    
-    if [[ "$quiet_mode" != "true" ]]; then
-        echo "🆕 Creating fresh target database..."
-    fi
-    local create_error=$(
-        _exec_psql "$tgt_sslmode" \
+    # For Supabase or postgres database, skip drop/create and restore directly
+    local backup_db_name=""
+    if [[ "$is_supabase" != "true" ]] && [[ "$tgt_db_name" != "postgres" ]]; then
+        # Standard PostgreSQL: safely backup existing database before sync
+        # Check if target database exists
+        local db_exists=$(_exec_psql "$tgt_sslmode" \
             env PGPASSWORD="${tgt_pass}" "$psql_bin" \
             -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
-            -c "CREATE DATABASE \"${src_db}\";" \
-            2>&1 >/dev/null
-    )
-    
-    if [ $? -ne 0 ]; then
-        echo "❌ Failed to create database '${src_db}'"
-        if [[ -n "$create_error" ]]; then
-            echo "   Error: $(echo "$create_error" | head -n 1)"
+            -t -c "SELECT 1 FROM pg_database WHERE datname='${tgt_db_name}';" \
+            2>/dev/null | tr -d ' ')
+        
+        if [[ -n "$db_exists" ]] && [[ "$db_exists" == "1" ]]; then
+            # Database exists - rename it to backup
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            backup_db_name="${tgt_db_name}_backup_${timestamp}"
+            
+            # Clean up old backups (keep only last 3)
+            if [[ "$quiet_mode" != "true" ]]; then
+                echo "🧹 Cleaning up old backups (keeping last 3)..."
+            fi
+            local old_backups=$(_exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                -t -c "SELECT datname FROM pg_database WHERE datname LIKE '${tgt_db_name}_backup_%' ORDER BY datname DESC OFFSET 3;" \
+                2>/dev/null)
+            
+            if [[ -n "$old_backups" ]]; then
+                while IFS= read -r old_backup; do
+                    [[ -z "$old_backup" ]] && continue
+                    old_backup=$(echo "$old_backup" | tr -d ' ')
+                    _exec_psql "$tgt_sslmode" \
+                        env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                        -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                        -c "DROP DATABASE IF EXISTS \"${old_backup}\";" \
+                        >/dev/null 2>&1 || true
+                done <<< "$old_backups"
+            fi
+            
+            if [[ "$quiet_mode" != "true" ]]; then
+                echo "💾 Backing up existing database '${tgt_db_name}' to '${backup_db_name}'..."
+            fi
+            
+            # Terminate connections to target database
+            _exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                -t -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${tgt_db_name}' AND pid <> pg_backend_pid();" \
+                >/dev/null 2>&1 || true
+            
+            # Rename existing database to backup
+            local rename_error=$(
+                _exec_psql "$tgt_sslmode" \
+                    env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                    -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                    -c "ALTER DATABASE \"${tgt_db_name}\" RENAME TO \"${backup_db_name}\";" \
+                    2>&1
+            )
+            
+            if [ $? -ne 0 ]; then
+                echo "❌ Failed to backup existing database '${tgt_db_name}'"
+                if [[ -n "$rename_error" ]]; then
+                    echo "   Error: $(echo "$rename_error" | head -n 1)"
+                fi
+                return 1
+            fi
         fi
-        return 1
+        
+        # Create fresh target database
+        if [[ "$quiet_mode" != "true" ]]; then
+            echo "🆕 Creating fresh target database '${tgt_db_name}'..."
+        fi
+        local create_error=$(
+            _exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                -c "CREATE DATABASE \"${tgt_db_name}\";" \
+                2>&1
+        )
+        
+        if [ $? -ne 0 ]; then
+            echo "❌ Failed to create database '${tgt_db_name}'"
+            if [[ -n "$create_error" ]]; then
+                echo "   Error: $(echo "$create_error" | head -n 1)"
+            fi
+            # Try to restore backup if creation failed
+            if [[ -n "$backup_db_name" ]]; then
+                echo "🔄 Attempting to restore backup..."
+                _exec_psql "$tgt_sslmode" \
+                    env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                    -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                    -c "ALTER DATABASE \"${backup_db_name}\" RENAME TO \"${tgt_db_name}\";" \
+                    >/dev/null 2>&1 || true
+            fi
+            return 1
+        fi
+    else
+        # Supabase or postgres database: just clean existing schema objects
+        if [[ "$quiet_mode" != "true" ]]; then
+            echo "🧹 Cleaning existing objects in target database (Supabase/postgres)..."
+        fi
+        # Drop all objects in public schema (Supabase uses public schema)
+        _exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${tgt_db_name}" \
+            -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;" \
+            >/dev/null 2>&1 || true
     fi
     
     if [[ "$quiet_mode" != "true" ]]; then
@@ -1453,9 +1548,12 @@ perform_postgres_sync() {
     # Capture errors from both dump and restore
     local dump_error_file=$(mktemp)
     local restore_error_file=$(mktemp)
+    local dump_output_file=$(mktemp)
     
     # If target is PostgreSQL 16 or earlier, use SQL format and filter incompatible parameters
     # Otherwise use custom format for better performance
+    local dump_result=0
+    local restore_result=0
     local sync_result=0
     
     if [[ -n "$tgt_version" ]] && [[ "$tgt_version" -le 16 ]]; then
@@ -1465,54 +1563,170 @@ perform_postgres_sync() {
             --no-owner --no-acl --clean --if-exists 2> >(tee "$dump_error_file" >&2) \
         | grep -v "transaction_timeout" \
         | grep -v "ALTER DATABASE.*SET transaction_timeout" \
-        | {
+        > "$dump_output_file"
+        dump_result=$?
+        
+        if [[ $dump_result -eq 0 ]]; then
             # Build psql restore args
             psql_restore_args=( \
                 -h "${tgt_host}" \
                 -p "${tgt_port}" \
                 -U "${tgt_user}" \
-                -d "${src_db}" \
+                -d "${tgt_db_name}" \
             )
             if [[ "$verbose_mode" != "true" ]]; then
                 psql_restore_args+=("-q")
             fi
             _exec_psql "$tgt_sslmode" \
                 env PGPASSWORD="${tgt_pass}" "$psql_bin" "${psql_restore_args[@]}" \
+                < "$dump_output_file" \
                 2> >(tee "$restore_error_file" >&2) >/dev/null
-        }
-        sync_result=$?
+            restore_result=$?
+        fi
+        sync_result=$((dump_result | restore_result))
     else
         # Use custom format for PostgreSQL 17+ targets
         env PGPASSWORD="${src_pass}" "$pg_dump_bin" "${pg_dump_args[@]}" \
-            -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" -Fc 2> >(tee "$dump_error_file" >&2) \
-        | {
+            -h "${src_host}" -p "${src_port}" -U "${src_user}" -d "${src_db}" -Fc \
+            -f "$dump_output_file" \
+            2> >(tee "$dump_error_file" >&2)
+        dump_result=$?
+        
+        if [[ $dump_result -eq 0 ]]; then
             # Build pg_restore args
             pg_restore_args+=( \
                 -h "${tgt_host}" \
                 -p "${tgt_port}" \
                 -U "${tgt_user}" \
-                -d "${src_db}" \
+                -d "${tgt_db_name}" \
                 --clean --if-exists --no-owner --no-acl \
             )
             _exec_psql "$tgt_sslmode" \
                 env PGPASSWORD="${tgt_pass}" "$pg_restore_bin" "${pg_restore_args[@]}" \
+                "$dump_output_file" \
                 2> >(tee "$restore_error_file" >&2) >/dev/null
-        }
-        sync_result=$?
+            restore_result=$?
+        fi
+        sync_result=$((dump_result | restore_result))
     fi
+    
+    # Clean up dump output file
+    rm -f "$dump_output_file"
     
     if [[ -n "$sync_dots_pid" ]]; then
         sync_dots_stop "$sync_dots_pid"
         echo ""
     fi
     
+    # Check for warnings even if exit code is 0 (common with Supabase)
+    local has_warnings=false
+    if [[ -s "$restore_error_file" ]]; then
+        # Check for critical warnings/errors
+        if grep -qiE "(error|failed|permission denied|does not exist|cannot)" "$restore_error_file"; then
+            has_warnings=true
+        fi
+    fi
+    
+    # Verify data was actually restored (important for Supabase)
+    local verification_info=""
     if [ $sync_result -eq 0 ]; then
-        echo "✅ '${src_db}' synced successfully"
+        if [[ "$quiet_mode" != "true" ]]; then
+            echo "🔍 Verifying restored data..."
+        fi
+        
+        # Get table count and schemas
+        local table_count=$(_exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${tgt_db_name}" \
+            -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema');" \
+            2>/dev/null | tr -d ' ')
+        
+        # Get schemas list
+        local schemas=$(_exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${tgt_db_name}" \
+            -t -c "SELECT string_agg(nspname, ', ' ORDER BY nspname) FROM pg_namespace WHERE nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema', 'pg_toast_temp_1');" \
+            2>/dev/null | tr -d ' ')
+        
+        # Get total row count (sample from a few tables)
+        local sample_tables=$(_exec_psql "$tgt_sslmode" \
+            env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+            -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d "${tgt_db_name}" \
+            -t -c "SELECT schemaname||'.'||tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') LIMIT 5;" \
+            2>/dev/null | tr -d ' ' | head -3)
+        
+        if [[ -n "$table_count" ]] && [[ "$table_count" != "0" ]]; then
+            verification_info="   Tables: ${table_count}"
+            [[ -n "$schemas" ]] && verification_info+=" | Schemas: ${schemas}"
+        else
+            has_warnings=true
+            verification_info="   ⚠️  WARNING: No tables found in restored database!"
+        fi
+    fi
+    
+    if [ $sync_result -eq 0 ] && [[ "$has_warnings" != "true" ]]; then
+        echo "✅ '${src_db}' synced successfully to '${tgt_db_name}'"
+        if [[ -n "$verification_info" ]]; then
+            echo "$verification_info"
+        fi
+        
+        # Clean up backup database if sync was successful
+        if [[ -n "$backup_db_name" ]]; then
+            if [[ "$quiet_mode" != "true" ]]; then
+                echo "🗑️  Removing backup database '${backup_db_name}'..."
+            fi
+            _exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                -c "DROP DATABASE IF EXISTS \"${backup_db_name}\";" \
+                >/dev/null 2>&1 || true
+        fi
+        
         [[ "$quiet_mode" != "true" ]] && echo "====================================="
         rm -f "$dump_error_file" "$restore_error_file"
         return 0
+    elif [ $sync_result -eq 0 ] && [[ "$has_warnings" == "true" ]]; then
+        echo "⚠️  '${src_db}' sync completed with warnings"
+        if [[ -n "$verification_info" ]]; then
+            echo "$verification_info"
+        fi
+        echo "   Data may not be fully synced. Check errors below:"
+        
+        # Keep backup if sync had warnings
+        if [[ -n "$backup_db_name" ]]; then
+            echo ""
+            echo "💾 Backup database '${backup_db_name}' kept for safety"
+        fi
     else
         echo "❌ Sync failed for '${src_db}'"
+        
+        # Restore backup if sync failed
+        if [[ -n "$backup_db_name" ]]; then
+            echo ""
+            echo "🔄 Restoring backup database..."
+            # Drop failed database
+            _exec_psql "$tgt_sslmode" \
+                env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                -c "DROP DATABASE IF EXISTS \"${tgt_db_name}\";" \
+                >/dev/null 2>&1 || true
+            # Restore backup
+            local restore_backup_error=$(
+                _exec_psql "$tgt_sslmode" \
+                    env PGPASSWORD="${tgt_pass}" "$psql_bin" \
+                    -h "${tgt_host}" -p "${tgt_port}" -U "${tgt_user}" -d postgres \
+                    -c "ALTER DATABASE \"${backup_db_name}\" RENAME TO \"${tgt_db_name}\";" \
+                    2>&1
+            )
+            if [ $? -eq 0 ]; then
+                echo "✅ Backup database restored successfully"
+            else
+                echo "⚠️  Failed to restore backup. Original database is available as '${backup_db_name}'"
+                if [[ -n "$restore_backup_error" ]]; then
+                    echo "   Error: $(echo "$restore_backup_error" | head -n 1)"
+                fi
+            fi
+        fi
         
         # Show dump errors if any
         if [[ -s "$dump_error_file" ]]; then
@@ -1526,11 +1740,15 @@ perform_postgres_sync() {
         
         # Show restore errors if any
         if [[ -s "$restore_error_file" ]]; then
-            echo "   Restore errors:"
-            # Show first few error lines
-            head -n 5 "$restore_error_file" | sed 's/^/      /'
-            if [[ $(wc -l < "$restore_error_file") -gt 5 ]]; then
-                echo "      ... (more errors in restore)"
+            echo "   Restore errors/warnings:"
+            # Show all error lines (not just first 5) to help debug Supabase issues
+            if [[ "$verbose_mode" == "true" ]] || [[ "$has_warnings" == "true" ]]; then
+                cat "$restore_error_file" | sed 's/^/      /'
+            else
+                head -n 10 "$restore_error_file" | sed 's/^/      /'
+                if [[ $(wc -l < "$restore_error_file") -gt 10 ]]; then
+                    echo "      ... (more errors in restore, use --verbose to see all)"
+                fi
             fi
         fi
         
@@ -1542,6 +1760,14 @@ perform_postgres_sync() {
         
         [[ "$quiet_mode" != "true" ]] && echo "====================================="
         rm -f "$dump_error_file" "$restore_error_file"
+        
+        # If sync failed or had warnings, suggest using verbose mode
+        if [[ "$verbose_mode" != "true" ]]; then
+            echo ""
+            echo "💡 Tip: Run with --verbose flag to see detailed output:"
+            echo "   dbt sync postgres -s <source> -d <dest> --verbose"
+        fi
+        
         return 1
     fi
 }

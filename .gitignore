@@ -59,4 +59,4 @@ StirlingPDF/customFiles/
 StirlingPDF/
 
 # Mac scripts secrets
-mac_scripts_secrets
+dbt_secrets

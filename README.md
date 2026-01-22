@@ -163,7 +163,7 @@ A powerful SSH tunnel manager for connecting to remote database services. Automa
 **Configuration:**
 VPS configurations are loaded from secrets file:
 ```
-~/Library/Mobile Documents/com~apple~CloudDocs/Backups/mac_scripts_secrets
+~/Library/Mobile Documents/com~apple~CloudDocs/Backups/dbt_secrets
 ```
 
 **VPS_CONFIGS format:**
