@@ -216,19 +216,18 @@ readonly SSH_SERVICE=$(get_ssh_service)
 
 update_apt() {
   log_info "Updating and upgrading apt packages..."
-  sudo apt-get -y update
-  sudo apt update -y
-  sudo apt-get -y upgrade
-  sudo apt-get -y dist-upgrade
+  sudo apt -y update
+  sudo apt -y upgrade
+  sudo apt -y full-upgrade
   sudo apt --fix-broken install -y
-  sudo apt-get -y autoremove
-  sudo apt-get -y autoclean
+  sudo apt -y autoremove
+  sudo apt -y autoclean
   log_success "System packages updated successfully."
 }
 
 install_firefox() {
   log_info "Installing Firefox browser..."
-  sudo apt-get -y install firefox
+  sudo apt -y install firefox
   log_success "Firefox installed successfully."
 }
 
@@ -242,9 +241,9 @@ install_xrdp() {
   fi
   
   # Install XRDP and XFCE4
-  sudo DEBIAN_FRONTEND=noninteractive apt-get -y install xfce4
+  sudo DEBIAN_FRONTEND=noninteractive apt -y install xfce4
   sudo apt install -y xfce4-session
-  sudo apt-get -y install xrdp
+  sudo apt -y install xrdp
   
   # Enable and start XRDP service
   sudo systemctl enable xrdp
@@ -454,8 +453,8 @@ install_zoxide() {
   log_info "Installing zoxide (a smarter cd command)..."
   
   # Install required dependencies
-  sudo apt-get update -y
-  sudo apt-get install -y curl
+  sudo apt update -y
+  sudo apt install -y curl
 
   # Install zoxide using the official installation script
   curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
@@ -558,7 +557,7 @@ install_fastfetch() {
   
   if [ -f /tmp/fastfetch.deb ]; then
     sudo dpkg -i /tmp/fastfetch.deb
-    sudo apt-get install -f -y  # Fix any dependency issues
+    sudo apt install -f -y  # Fix any dependency issues
     rm /tmp/fastfetch.deb
   else
     log_error "Failed to download fastfetch"
@@ -576,10 +575,17 @@ install_fastfetch() {
 
 install_basic_tools() {
   log_info "Installing basic tools..."
-  sudo apt-get -y update
-  sudo apt-get -y install git tmux
-  sudo apt-get -y install uget wget build-essential zip unzip net-tools curl bat htop
+  sudo apt -y update
+  
+  # Install essential tools (required)
+  sudo apt -y install git tmux wget build-essential zip unzip net-tools curl htop
+  
+  # Install optional tools (may not be available in all repos)
+  sudo apt -y install bat || log_warning "bat not available (may need manual installation)"
+  sudo apt -y install uget || log_warning "uget not available (may need PPA on Ubuntu)"
+  
   log_success "Basic tools installed successfully."
+  log_info "Note: 'bat' executable is named 'batcat' on Ubuntu/Debian systems"
 }
 
 install_uv() {
@@ -591,8 +597,8 @@ install_uv() {
 install_qbittorrent() {
   log_info "Installing qBittorrent..."
   sudo add-apt-repository ppa:qbittorrent-team/qbittorrent-stable -y
-  sudo apt-get -y update
-  sudo apt-get -y install qbittorrent
+  sudo apt -y update
+  sudo apt -y install qbittorrent
   log_success "qBittorrent installed successfully."
 }
 
@@ -615,14 +621,14 @@ install_fnm() {
   # Ensure curl and unzip are installed
   if ! command -v curl >/dev/null 2>&1; then
     log_info "curl is required for FNM. Installing curl..."
-    sudo apt-get update -y
-    sudo apt-get install -y curl
+    sudo apt update -y
+    sudo apt install -y curl
   fi
   
   if ! command -v unzip >/dev/null 2>&1; then
     log_info "unzip is required for FNM. Installing unzip..."
-    sudo apt-get update -y
-    sudo apt-get install -y unzip
+    sudo apt update -y
+    sudo apt install -y unzip
   fi
   
   # Install FNM using the official installation script
@@ -676,8 +682,8 @@ install_proxy() {
     return 0
   fi
 
-  sudo apt-get -y update
-  sudo apt-get -y upgrade
+  sudo apt -y update
+  sudo apt -y upgrade
   sudo wget https://raw.githubusercontent.com/serverok/squid-proxy-installer/master/squid3-install.sh
   sudo bash squid3-install.sh -y
   # squid-add-user
@@ -733,8 +739,8 @@ EONG
 
 install_python() {
   log_info "Installing Python..."
-  sudo apt-get -y update
-  sudo apt-get -y install python3 python3-pip
+  sudo apt -y update
+  sudo apt -y install python3 python3-pip
 
   # config python
   sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
@@ -754,9 +760,9 @@ cleanup() {
   sudo dpkg --configure -a
 
   # Remove unnecessary packages
-  sudo apt-get autoremove -y
-  sudo apt-get autoclean
-  sudo apt-get clean
+  sudo apt autoremove -y
+  sudo apt autoclean
+  sudo apt clean
   log_success "Cleanup completed successfully."
 }
 
@@ -764,7 +770,7 @@ configure_firewall() {
   log_info "Configuring firewall (UFW)..."
   
   # Install UFW if not already installed
-  sudo apt-get install -y ufw
+  sudo apt install -y ufw
   
   # Set default policies - ALLOW ALL INCOMING
    sudo ufw default allow incoming
@@ -808,11 +814,11 @@ install_fail2ban() {
   log_info "Installing and configuring Fail2ban..."
   
   # Update package list
-  sudo apt-get update -y
+  sudo apt update -y
   
   # Install Fail2ban first
   log_info "Installing Fail2ban..."
-  sudo apt-get install -y fail2ban
+  sudo apt install -y fail2ban
   
   # Check if fail2ban was installed successfully
   if ! command -v fail2ban-client >/dev/null 2>&1; then
@@ -886,8 +892,6 @@ install_fail2ban() {
     return 1
   fi
 }
-
-
 
 ask_install() {
   local component="$1"
