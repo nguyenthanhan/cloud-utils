@@ -42,7 +42,7 @@ _sync_with_upstream() {
     # If on main, merge upstream changes
     if [ "$current_branch" = "main" ]; then
         # Check if upstream main branch exists
-        if git ls-remote --heads upstream main > /dev/null 2>&1; then
+        if [ -n "$(git ls-remote --heads upstream main 2>/dev/null)" ]; then
             # Check for uncommitted changes
             if ! git diff --quiet || ! git diff --cached --quiet; then
                 echo "--- ⚠️ You have uncommitted changes. Skipping upstream merge."
@@ -75,11 +75,19 @@ _sync_with_upstream() {
 # Helper function to fetch and prune
 _git_fetch_and_prune() {
     echo "--- ⬇️ Fetching from all remotes..."
+    # Try fetching with increased buffer size to handle large repos/unstable network
     if git fetch --all --prune; then
         echo "--- ✅ Fetch & prune successful"
         return 0
     else
-        echo "--- ❌ Failed to fetch/prune"
+        echo "--- ⚠️ Failed to fetch from all remotes. Trying origin only..."
+        # Fallback: try fetching just origin with increased buffer
+        if git fetch origin --prune; then
+             echo "--- ✅ Fetch origin successful"
+             return 0
+        fi
+        
+        echo "--- ❌ Failed to fetch"
         return 1
     fi
 }
@@ -129,17 +137,33 @@ _sync_with_origin() {
 
 # Helper function to fetch main/develop branch without checkout
 _fetch_main_develop() {
-    for branch in main develop; do
-        if git ls-remote --heads origin "$branch" > /dev/null 2>&1; then
-            echo "--- ⬇️ Fetching origin/$branch without checkout..."
-            if git fetch origin "$branch:$branch"; then
-                echo "--- ✅ Successfully updated local $branch from origin/$branch"
-            else
-                echo "--- ⚠️ Failed to fetch origin/$branch"
-            fi
-            return 0
+    # 1. Fetch origin/main -> local main (if exists)
+    if [ -n "$(git ls-remote --heads origin main 2>/dev/null)" ]; then
+        echo "--- ⬇️ Fetching origin/main without checkout..."
+        if git fetch origin main:main; then
+            echo "--- ✅ Successfully updated local main from origin/main"
+        else
+            echo "--- ⚠️ Failed to fetch origin/main"
         fi
-    done
+    fi
+
+    # 2. Fetch origin/develop -> local develop (if exists)
+    if [ -n "$(git ls-remote --heads origin develop 2>/dev/null)" ]; then
+        echo "--- ⬇️ Fetching origin/develop without checkout..."
+        if git fetch origin develop:develop; then
+            echo "--- ✅ Successfully updated local develop from origin/develop"
+        else
+            echo "--- ⚠️ Failed to fetch origin/develop"
+        fi
+    fi
+
+    # 3. Fetch origin HEAD
+    echo "--- ⬇️ Fetching origin HEAD..."
+    if git fetch origin HEAD; then
+         echo "--- ✅ Successfully fetched origin HEAD"
+    else
+         echo "--- ⚠️ Failed to fetch origin HEAD"
+    fi
 }
 
 # Function 2: Fetch and sync repository
