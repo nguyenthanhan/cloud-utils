@@ -73,7 +73,38 @@ brew_upgrade_casks() {
   if [[ -n "$action" ]]; then
     case "$action" in
       list)
-        echo "📋 Current desired casks:"
+        # Check installed casks first (needed for "current desired" = desired ∩ installed)
+        local -a installed raw
+        raw=($(brew list --cask --full-name 2>/dev/null))
+        installed=()
+        for c in "${raw[@]}"; do installed+=("${c##*/}"); done
+
+        # Sets
+        local -A want has
+        for c in "${desired[@]}";  do want[$c]=1; done
+        for c in "${installed[@]}"; do has[$c]=1;  done
+
+        # Current desired = desired AND installed
+        local -a current_desired=()
+        for c in "${desired[@]}"; do
+          [[ -n ${has[$c]} ]] && current_desired+=("$c")
+        done
+
+        # Compute lists
+        local -a missing=() extras=()
+        local -A seen
+        for c in "${desired[@]}"; do
+          if [[ -z ${has[$c]} ]]; then
+            missing+=("$c")
+          fi
+        done
+        for c in "${installed[@]}"; do
+          [[ -n ${seen[$c]} ]] && continue
+          seen[$c]=1
+          [[ -z ${want[$c]} ]] && extras+=("$c")
+        done
+
+        echo "✅ Desired casks (installed):"
         # Get terminal width, try stty first (more reliable in some shells), then tput, default to 100
         local term_width
         if [[ -t 1 ]]; then
@@ -87,49 +118,21 @@ brew_upgrade_casks() {
         # Subtract 4 for indentation/margin
         local col_width=$((term_width - 4))
 
-        if [[ ${#desired[@]} -gt 0 ]]; then
-          printf "%s\n" "${desired[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
+        if [[ ${#current_desired[@]} -gt 0 ]]; then
+          printf "%s\n" "${current_desired[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
             print -P "%F{cyan}  $line%f"
           done
         fi
-        echo "\n📊 Total: ${#desired[@]} casks"
-
-        # Check installed casks
-        local -a installed raw
-        raw=($(brew list --cask --full-name 2>/dev/null))
-        installed=()
-        for c in "${raw[@]}"; do installed+=("${c##*/}"); done
-
-        # Sets
-        local -A want has
-        for c in "${desired[@]}";  do want[$c]=1; done
-        for c in "${installed[@]}"; do has[$c]=1;  done
-
-        # Compute lists
-        local -a missing=() extras=()
-        local -A seen
-
-        for c in "${desired[@]}"; do
-          if [[ -z ${has[$c]} ]]; then
-            missing+=("$c")
-          fi
-        done
-
-        for c in "${installed[@]}"; do
-          [[ -n ${seen[$c]} ]] && continue
-          seen[$c]=1
-          [[ -z ${want[$c]} ]] && extras+=("$c")
-        done
 
         if (( ${#missing[@]} )); then
-          echo "\n🟢 In desired but NOT installed:"
+          echo "\n📥 In desired but NOT installed:"
           printf "%s\n" "${missing[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
             print -P "%F{yellow}  $line%f"
           done
         fi
 
         if (( ${#extras[@]} )); then
-          echo "\n🟢 Installed but NOT in desired:"
+          echo "\nℹ️  Installed but NOT in desired:"
           printf "%s\n" "${extras[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
             print -P "%F{magenta}  $line%f"
           done
@@ -250,13 +253,13 @@ brew_upgrade_casks() {
 
   # Print lists
   if (( ${#missing[@]} )); then
-    echo "🟢 In desired but NOT installed:"
+    echo "📥 In desired but NOT installed:"
     for c in "${missing[@]}"; do print -P "%F{green}- $c%f"; done
     echo
   fi
 
   if (( ${#extras[@]} )); then
-    echo "🟢 Installed but NOT in desired:"
+    echo "ℹ️ Installed but NOT in desired:"
     for c in "${extras[@]}"; do print -P "%F{green}- $c%f"; done
     echo
   fi

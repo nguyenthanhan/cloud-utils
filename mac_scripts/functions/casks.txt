@@ -10,6 +10,8 @@ chatgpt
 claude
 claude-code
 coderabbit
+codex
+codex-app
 cursor
 figma
 firefox
