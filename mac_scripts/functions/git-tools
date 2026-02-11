@@ -110,6 +110,63 @@ _cleanup_gone_branches() {
     done
 }
 
+# Helper function to detect best base branch for merged-branch cleanup
+_get_cleanup_base_branch() {
+    local current_branch="$1"
+
+    if [ "$current_branch" = "main" ] || [ "$current_branch" = "develop" ]; then
+        echo "$current_branch"
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/heads/main; then
+        echo "main"
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/heads/develop; then
+        echo "develop"
+        return 0
+    fi
+
+    echo "$current_branch"
+}
+
+# Helper function to clean up local branches already merged into base branch
+_cleanup_merged_branches() {
+    local base_branch="$1"
+    local current_branch="$2"
+    local cleaned_any=0
+
+    if [ -z "$base_branch" ] || ! git show-ref --verify --quiet "refs/heads/$base_branch"; then
+        return 0
+    fi
+
+    local branches=$(git for-each-ref --format='%(refname:short)' refs/heads | grep -Ev '^(main|master|develop)$')
+
+    if [ -z "$branches" ]; then
+        return 0
+    fi
+
+    echo "--- 🧹 Cleaning merged branches (base: $base_branch)..."
+    for branch in $(echo "$branches"); do
+        if [ "$branch" = "$current_branch" ]; then
+            continue
+        fi
+
+        if git merge-base --is-ancestor "$branch" "$base_branch" 2>/dev/null; then
+            if git branch -d "$branch" 2>/dev/null; then
+                echo "--- ✅ Deleted merged branch: $branch"
+                cleaned_any=1
+            fi
+        fi
+    done
+
+    if [ "$cleaned_any" -eq 0 ]; then
+        echo "--- ℹ️ No merged local branches to clean"
+    fi
+}
+
 # Helper function to get current branch
 _get_current_branch() {
     git rev-parse --abbrev-ref HEAD 2>/dev/null
@@ -126,48 +183,61 @@ _sync_with_origin() {
     local branch="$1"
     
     echo "--- 🔄 Syncing $branch branch..."
-    if git pull origin "$branch" 2>/dev/null; then
+    if git pull --ff-only origin "$branch" 2>/dev/null; then
         echo "--- ✅ Pulled from origin/$branch"
         return 0
     else
-        echo "--- ❌ Pull failed - check for uncommitted changes"
+        echo "--- ❌ Pull failed (non fast-forward or uncommitted changes)"
         return 1
     fi
 }
 
 # Helper function to fetch main/develop branch without checkout
 _fetch_main_develop() {
-    # 1. Fetch origin/main -> local main (if exists)
+    # 1. Fetch origin/main (remote-tracking only, safe on any checked out branch)
     if [ -n "$(git ls-remote --heads origin main 2>/dev/null)" ]; then
         echo "--- ⬇️ Fetching origin/main without checkout..."
-        if git fetch origin main:main; then
-            echo "--- ✅ Successfully updated local main from origin/main"
+        if git fetch origin main; then
+            echo "--- ✅ Successfully fetched origin/main"
         else
             echo "--- ⚠️ Failed to fetch origin/main"
         fi
     fi
 
-    # 2. Fetch origin/develop -> local develop (if exists)
+    # 2. Fetch origin/develop (remote-tracking only, safe on any checked out branch)
     if [ -n "$(git ls-remote --heads origin develop 2>/dev/null)" ]; then
         echo "--- ⬇️ Fetching origin/develop without checkout..."
-        if git fetch origin develop:develop; then
-            echo "--- ✅ Successfully updated local develop from origin/develop"
+        if git fetch origin develop; then
+            echo "--- ✅ Successfully fetched origin/develop"
         else
             echo "--- ⚠️ Failed to fetch origin/develop"
         fi
-    fi
-
-    # 3. Fetch origin HEAD
-    echo "--- ⬇️ Fetching origin HEAD..."
-    if git fetch origin HEAD; then
-         echo "--- ✅ Successfully fetched origin HEAD"
-    else
-         echo "--- ⚠️ Failed to fetch origin HEAD"
     fi
 }
 
 # Function 2: Fetch and sync repository
 git_fetch() {
+    local sync_upstream=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sync-upstream)
+                sync_upstream=1
+                ;;
+            -h|--help)
+                echo "Usage: gt fetch [--sync-upstream]"
+                echo "  --sync-upstream  Merge upstream/main into local main and push origin/main (main only)"
+                return 0
+                ;;
+            *)
+                echo "❌ Unknown option for fetch: $1"
+                echo "Usage: gt fetch [--sync-upstream]"
+                return 1
+                ;;
+        esac
+        shift
+    done
+
     if ! _git_check_repo; then
         return 1
     fi
@@ -182,25 +252,31 @@ git_fetch() {
         return 1
     fi
     
-    # Step 3: Clean up gone branches
-    _cleanup_gone_branches
-    
-    # Step 4: Get current branch and decide sync strategy
+    # Step 3: Get current branch and decide sync strategy
     local current_branch=$(_get_current_branch)
     
     if _should_auto_sync "$current_branch"; then
-        # Step 5: Sync with origin
+        # Step 4: Sync with origin
         if ! _sync_with_origin "$current_branch"; then
             return 1
         fi
         
-        # Step 6: If on main, also sync with upstream
+        # Step 5: If on main, optionally sync with upstream
         if [ "$current_branch" = "main" ]; then
-            _sync_with_upstream
+            if [ "$sync_upstream" -eq 1 ]; then
+                _sync_with_upstream
+            else
+                echo "--- ℹ️ Skipping upstream sync (use 'gt fetch --sync-upstream' to enable)"
+            fi
         fi
     else
         echo "--- ℹ️ On branch '$current_branch' - no auto-sync performed"
     fi
+
+    # Step 6: Clean up gone branches and merged local branches
+    _cleanup_gone_branches
+    local cleanup_base_branch=$(_get_cleanup_base_branch "$current_branch")
+    _cleanup_merged_branches "$cleanup_base_branch" "$current_branch"
     
     return 0
 }
@@ -213,7 +289,7 @@ gt() {
         echo ""
         echo "Available commands:"
         echo "  push   - Force push (safe)"
-        echo "  fetch  - Fetch and sync repository"
+        echo "  fetch [--sync-upstream] - Fetch and sync repository"
         return 1
     fi
     
@@ -233,10 +309,8 @@ gt() {
             echo ""
             echo "Available commands:"
             echo "  push   - Force push (safe)"
-            echo "  fetch  - Fetch and sync repository"
+            echo "  fetch [--sync-upstream] - Fetch and sync repository"
             return 1
             ;;
     esac
 }
-
-

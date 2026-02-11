@@ -3,8 +3,7 @@
 # File: mac_scripts/gt
 # Git tool with the following commands:
 #   gt push              - Force push (safe with --force-with-lease)
-#   gt fetch [branch]  - Fetch specified branch, or both main and develop if no argument
-#   gt clean [--force] - Clean up gone branches (use --force to force delete)
+#   gt fetch [--sync-upstream] - Fetch/sync; optional upstream->origin sync when on main
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
