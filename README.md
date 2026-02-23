@@ -1,267 +1,133 @@
-# Traefik + Fail2ban VPS Setup
+# cloud-utils
 
-Automated VPS setup with security hardening, development tools, and modern terminal utilities.
+Utility scripts for VPS setup, a Docker stack, macOS helpers, MTProto proxy, and Rclone transfers.
 
-## Quick Start
+## Installation
 
 ```bash
-# Run interactive setup
-./setup.sh
+git clone https://github.com/nguyenthanhan/cloud-utils.git
+cd cloud-utils
 ```
-
-The script will ask which components you want, then install everything automatically.
-
----
 
 ## Usage
 
-### Default (Interactive)
+### VPS setup
+
 ```bash
 ./setup.sh
 ```
 
-### Install Specific Components
 ```bash
-./setup.sh -docker -nvm -python
-./setup.sh -zsh -zimfw -eza
+./setup.sh -apt-update -basic-tools -firewall -ssh-security -fail2ban
+./setup.sh -docker -fnm -python -uv
+./setup.sh -zsh -zimfw -bash-it -zoxide -eza -fastfetch
 ./setup.sh -proxy -proxy-port=8080
+./setup.sh -xrdp -xrdp-port=33899 -verify-xrdp
 ```
 
-### Available Flags
-- `-basic-tools` - System essentials
-- `-nvm` - Node.js
-- `-python` - Python 3 + pip
-- `-uv` - Python package manager
-- `-docker` - Docker
-- `-rclone` - Cloud storage sync
-- `-proxy` - Squid proxy (default port 31288)
-- `-zsh` - Zsh shell
-- `-zimfw` - Zsh framework
-- `-eza` - Modern ls
-- `-zoxide` - Smart cd
-- `-fastfetch` - System info
-- `-qbittorrent` - Torrent client
-- `-xrdp` - Remote desktop (port 33899)
-- `-firefox` - Web browser
-- `-ssh-port=PORT` - Custom SSH port
-- `-proxy-port=PORT` - Custom proxy port
+Common flags:
 
----
+- `-apt-update`, `-basic-tools`, `-set-password`
+- `-firewall`, `-ssh-security`, `-fail2ban`
+- `-docker`, `-rclone`, `-proxy`, `-proxy-port=PORT`
+- `-fnm`, `-python`, `-uv`
+- `-zsh`, `-zimfw`, `-bash-it`, `-zoxide`, `-eza`, `-fastfetch`
+- `-qbittorrent`, `-xrdp`, `-xrdp-port=PORT`, `-firefox`, `-verify-xrdp`
 
-## What Gets Installed
+### Docker stack
 
-### Security
-- UFW Firewall (allows all incoming - managed at cloud level)
-- SSH hardening (key-only auth, no root login)
-- Fail2ban with GeoIP2 blocking (blocks CN, RU, KP using GeoLite2 database)
-
-### Development
-- Node.js (via NVM)
-- Python 3 + pip + UV
-- Docker
-
-### Tools
-- Rclone (cloud storage)
-- Squid Proxy
-- Zsh + Zim + Eza + Zoxide + Fastfetch
-- qBittorrent
-- XRDP (remote desktop)
-- Firefox
-
----
-
-## Prerequisites
-
-Before running:
-1. SSH keys configured (avoid lockout)
-2. Sudo privileges available
-3. Internet connection
-4. Don't run as root
-
----
-
-## Fail2ban Status
-
-### Check Active Jails
 ```bash
-sudo fail2ban-client status
-sudo fail2ban-client status sshd
+cp .env.example .env
+docker network create my_network
+touch acme.json && chmod 600 acme.json
+docker compose up -d
 ```
 
-### Current Settings
-| Jail | Trigger | Ban Time |
-|------|---------|----------|
-| SSH | 3 attempts | 1 day |
-| Recidive | 2 bans in 7 days | 30 days |
-| GeoIP2 | CN/RU/KP | Permanent |
+### macOS scripts
 
-### Edit Configuration
 ```bash
-nano fail2ban-configs/fail2ban-jail.local
-sudo cp fail2ban-configs/fail2ban-jail.local /etc/fail2ban/jail.local
-sudo systemctl restart fail2ban
+zsh mac_scripts/dbt --help
+zsh mac_scripts/dbt connect
+zsh mac_scripts/dbt list --status
+zsh mac_scripts/dbt sync postgres -s 1 -d 1
+zsh mac_scripts/dbt sync mongodb -s 1 -d 1
 ```
 
-### Unban IP
 ```bash
-sudo fail2ban-client set sshd unbanip IP_ADDRESS
+zsh mac_scripts/create_link_zshrc
 ```
 
-### Test GeoIP2 Lookup
 ```bash
-# Test with GeoIP2 (modern)
-mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 8.8.8.8 country iso_code
-
-# Test with specific IPs
-mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 1.1.1.1 country iso_code  # US
-mmdblookup --file /usr/share/GeoIP/GeoLite2-Country.mmdb --ip 114.114.114.114 country iso_code  # CN
+zsh mac_scripts/buc
+zsh mac_scripts/buc list
+zsh mac_scripts/buc add <cask>
+zsh mac_scripts/buc remove <cask>
 ```
 
----
-
-## Troubleshooting
-
-### Locked Out of SSH
-1. Use VPS provider console
-2. Restore config: `sudo cp /etc/ssh/sshd_config.backup /etc/ssh/sshd_config`
-3. Restart SSH: `sudo systemctl restart ssh`
-
-### Installation Failed
-The script automatically rolls back changes on failure.
-
----
-
-## Traefik Configuration
-
-See `docker-compose.yml` for Traefik setup with:
-- Automatic HTTPS (Let's Encrypt)
-- Dashboard on port 8443
-- Reverse proxy configuration
-
-### Access Dashboard
-```
-https://your-domain:8443/dashboard/
-```
-
----
-
-## Utility Scripts
-
-### Database Connection Tool (`db_connection_tool`)
-
-A powerful SSH tunnel manager for connecting to remote database services. Automatically manages multiple database connections through SSH port forwarding.
-
-**Features:**
-- ✅ Automatic SSH tunnel management
-- ✅ Connect/disconnect multiple databases at once
-- ✅ Group connections by VPS (single SSH command per VPS)
-- ✅ Port conflict detection
-- ✅ Connection status monitoring with uptime
-- ✅ Detailed logging and error reporting
-- ✅ Filter connections by service name or port
-
-**Configuration:**
-VPS configurations are loaded from secrets file:
-```
-~/Library/Mobile Documents/com~apple~CloudDocs/Backups/dbt_secrets
-```
-
-**VPS_CONFIGS format:**
-```
-"VPS_NAME|USER|IP|SERVICE_NAME|SERVICE_ICON|LOCAL_PORT|REMOTE_HOST|REMOTE_PORT"
-```
-
-**Usage:**
 ```bash
-# Connect to all databases
-db_connection_tool -c
-
-# Connect to specific service (by name or port)
-db_connection_tool -c postgres
-db_connection_tool -c 5432
-
-# Disconnect all tunnels
-db_connection_tool -d
-
-# Disconnect specific service
-db_connection_tool -d postgres
-
-# List all port forwards (with status and uptime)
-db_connection_tool -l
-
-# Test SSH connectivity to all VPS
-db_connection_tool -t
-
-# Show help
-db_connection_tool -h
+zsh mac_scripts/gt fetch
+zsh mac_scripts/gt push
 ```
----
 
-### Sync .zshrc with Hard Link
+### MTProto
 
-The `create_link_zshrc` script creates a hard link between the `.zshrc` file in this project and your home directory. This allows you to manage your shell configuration from the project and have it automatically sync.
-
-**What is a hard link?**
-- Both files share the same content (same inode)
-- Changes to either file affect both
-- Useful for keeping configuration in sync
-
-**Usage:**
 ```bash
-# Run the script
-zsh scripts/create_link_zshrc
+cd mtproto
+bash save_random_hex.sh
+docker compose up -d
 ```
 
-**What it does:**
-1. Checks if files are already hard linked
-2. If `~/.zshrc` exists but is not linked, it will warn you (you need to remove it manually first)
-3. If `~/.zshrc` doesn't exist, it creates a hard link from the project's `.zshrc` to `~/.zshrc`
+### Rclone
 
-**Note:** If you already have a `.zshrc` file in your home directory, you may want to backup it first:
 ```bash
-# Backup existing .zshrc
-mv ~/.zshrc ~/.zshrc.backup
-
-# Then run the script
-zsh scripts/create_link_zshrc
+cd rclone
+export PROXY_URL="http://user:pass@host:port"
+bash transfer.sh
 ```
 
----
+Windows:
 
-## File Structure
-
+```powershell
+cd rclone
+.\transfer.ps1
 ```
+
+## Main Features
+
+- Ubuntu VPS provisioning with one script
+- Traefik + Portainer + Stirling PDF + DB services stack
+- macOS helpers for DB tunnel/sync, git, and Homebrew casks
+- MTProto proxy deployment
+- Rclone transfer helpers
+
+## Technology Stack
+
+- Bash and Zsh
+- Docker and Docker Compose
+- Traefik, Portainer, Stirling PDF
+- PostgreSQL, MongoDB, Redis
+
+## Project Structure
+
+```text
 .
-├── setup.sh                    # Main setup script
-├── docker-compose.yml          # Traefik configuration
-├── .zshrc                      # Zsh configuration (synced via hard link)
-├── fail2ban-configs/           # Fail2ban configs
-│   ├── fail2ban-jail.local
-│   ├── fail2ban-geoip-block.conf
-│   └── fail2ban-geoip-action.conf
-├── mac_scripts/                # macOS utility scripts
-│   ├── db_connection_tool     # SSH tunnel manager for database connections
-│   ├── create_link_zshrc      # Sync .zshrc with hard link
-│   ├── brew_upgrade_casks     # Homebrew cask updater
-│   ├── db_sync_tool           # Database sync utility
-│   └── navicat_reset_trial    # Navicat trial reset
-├── init/                       # Initialization scripts
-│   └── alias                  # Shell aliases
-└── acme.json                   # Let's Encrypt certificates
+├── setup.sh
+├── docker-compose.yml
+├── .env.example
+├── dbt_secrets.example
+├── fail2ban-configs/
+├── mac_init/
+├── mac_scripts/
+├── mtproto/
+└── rclone/
 ```
 
----
+## Contribution Guidelines
 
-## Safety Features
-
-- ✅ SSH key verification before disabling password auth
-- ✅ Automatic rollback on failures
-- ✅ Config backups before modifications
-- ✅ Port validation
-- ✅ Internet connectivity checks
-
----
+- Keep changes small and focused
+- Follow existing script style (Bash vs Zsh)
+- Include brief testing notes in PRs
 
 ## License
 
-MIT
+Provided as-is for personal use. Add an explicit license if you plan to redistribute.
