@@ -181,6 +181,11 @@ _should_auto_sync() {
 # Helper function to sync current branch with origin
 _sync_with_origin() {
     local branch="$1"
+
+    if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        echo "--- ℹ️ origin/$branch not found - skipping sync"
+        return 0
+    fi
     
     echo "--- 🔄 Syncing $branch branch..."
     if git pull --ff-only origin "$branch" 2>/dev/null; then
@@ -192,8 +197,8 @@ _sync_with_origin() {
     fi
 }
 
-# Helper function to fetch main/develop branch without checkout
-_fetch_main_develop() {
+# Helper function to refresh remote-tracking refs for primary branches
+_refresh_primary_remote_refs() {
     # 1. Fetch origin/main (remote-tracking only, safe on any checked out branch)
     if [ -n "$(git ls-remote --heads origin main 2>/dev/null)" ]; then
         echo "--- ⬇️ Fetching origin/main without checkout..."
@@ -212,6 +217,53 @@ _fetch_main_develop() {
         else
             echo "--- ⚠️ Failed to fetch origin/develop"
         fi
+    fi
+}
+
+# Helper function to align local branch with origin/<branch> (fast-forward only, no checkout)
+_sync_local_branch_with_origin_ff() {
+    local branch="$1"
+    local current_branch="$2"
+
+    # Guard: only continue if remote-tracking ref exists locally (from fetch)
+    if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        return 0
+    fi
+
+    # Skip checked-out branch (handled by pull flow)
+    if [ "$current_branch" = "$branch" ]; then
+        return 0
+    fi
+
+    # Create local branch if it doesn't exist yet
+    if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+        echo "--- 🌱 Creating local '$branch' from origin/$branch..."
+        if git branch "$branch" "origin/$branch" 2>/dev/null; then
+            echo "--- ✅ Created local '$branch'"
+        else
+            echo "--- ⚠️ Failed to create local '$branch'"
+        fi
+        return 0
+    fi
+
+    local local_sha=$(git rev-parse "refs/heads/$branch" 2>/dev/null)
+    local remote_sha=$(git rev-parse "refs/remotes/origin/$branch" 2>/dev/null)
+
+    if [ -z "$local_sha" ] || [ -z "$remote_sha" ] || [ "$local_sha" = "$remote_sha" ]; then
+        return 0
+    fi
+
+    # Update only when local is behind (no history rewrite if diverged)
+    if git merge-base --is-ancestor "$branch" "origin/$branch" 2>/dev/null; then
+        echo "--- 🔄 Fast-forwarding local '$branch' to origin/$branch..."
+        if git update-ref "refs/heads/$branch" "$remote_sha" "$local_sha" 2>/dev/null; then
+            echo "--- ✅ Updated local '$branch' to origin/$branch"
+        else
+            echo "--- ⚠️ Failed to update local '$branch'"
+        fi
+    else
+        echo "--- ⚠️ Local '$branch' has local-only commits; skipping auto-sync"
+        echo "--- 💡 Run: git switch $branch && git pull --ff-only origin $branch"
     fi
 }
 
@@ -244,8 +296,8 @@ git_fetch() {
     
     echo "--- ⬇️ Fetching and syncing repository ---"
     
-    # Step 1: Fetch main/develop without checkout
-    _fetch_main_develop
+    # Step 1: Refresh remote-tracking refs for primary branches
+    _refresh_primary_remote_refs
     
     # Step 2: Fetch and prune
     if ! _git_fetch_and_prune; then
@@ -254,6 +306,10 @@ git_fetch() {
     
     # Step 3: Get current branch and decide sync strategy
     local current_branch=$(_get_current_branch)
+
+    # Keep local main/develop aligned with origin/* while staying on feature branches
+    _sync_local_branch_with_origin_ff "main" "$current_branch"
+    _sync_local_branch_with_origin_ff "develop" "$current_branch"
     
     if _should_auto_sync "$current_branch"; then
         # Step 4: Sync with origin
