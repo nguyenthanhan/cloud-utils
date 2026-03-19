@@ -13,11 +13,44 @@ git_safe_force_push() {
         return 1
     fi
     
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    local tracking_branch=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null)
+    local tracking_remote=""
+    local tracking_name=""
+    local target_remote="origin"
+    local push_output=""
+
     echo "--- 🔄 Force Push (safe)..."
-    if git push --force-with-lease 2>/dev/null; then
+    if [ "$current_branch" = "HEAD" ] || [ -z "$current_branch" ]; then
+        echo "--- ❌ Cannot push from detached HEAD"
+        return 1
+    fi
+
+    if [ -n "$current_branch" ]; then
+        echo "--- 🌿 Current branch: $current_branch"
+    fi
+    if [ -n "$tracking_branch" ]; then
+        echo "--- 🎯 Tracking branch: $tracking_branch"
+        tracking_remote="${tracking_branch%%/*}"
+        tracking_name="${tracking_branch#*/}"
+        if [ -n "$tracking_remote" ] && [ "$tracking_remote" != "$tracking_branch" ]; then
+            target_remote="$tracking_remote"
+        fi
+        if [ "$tracking_name" != "$current_branch" ]; then
+            echo "--- ⚠️ Tracking branch name differs from local branch"
+            echo "--- ℹ️ Will push explicitly to $target_remote/$current_branch"
+        fi
+    else
+        echo "--- ⚠️ No upstream tracking branch configured"
+        echo "--- ℹ️ Will push explicitly to $target_remote/$current_branch"
+    fi
+
+    push_output=$(git push --force-with-lease "$target_remote" "HEAD:$current_branch" 2>&1)
+    if [ $? -eq 0 ]; then
+        [ -n "$push_output" ] && echo "$push_output"
         echo "--- ✅ Force push successful"
         echo "--- ⬇️ Fetching..."
-        if git fetch 2>/dev/null; then
+        if git fetch; then
             echo "--- ✅ Fetch successful"
         else
             echo "--- ❌ Fetch failed"
@@ -25,6 +58,8 @@ git_safe_force_push() {
         return 0
     else
         echo "--- ❌ Force push failed"
+        [ -n "$push_output" ] && echo "$push_output"
+        echo "--- 💡 Tip: run 'git remote -v' and verify write permission to the remote"
         return 1
     fi
 }
