@@ -718,23 +718,26 @@ install_docker() {
   # Restart the Docker service
   sudo systemctl restart docker
   
-  # Check Docker version
-  log_info "Docker version: $(docker --version)"
-  
-  # Apply docker group to current session without logout
-  log_info "Applying docker group permissions to current session..."
-  newgrp docker <<EONG
-  # Create docker network
-  if docker network ls | grep -q "traefik_network"; then
-    echo "✅ Docker network 'traefik_network' already exists"
-  else
-    docker network create traefik_network 2>/dev/null && echo "✅ Docker network 'traefik_network' created" || echo "⚠️  Failed to create network (not critical)"
+  # Use sudo here: group membership does not apply to this shell until a new login.
+  # (newgrp + heredoc is unreliable; plain docker would hit permission denied on docker.sock.)
+  log_info "$(sudo docker --version)"
+  if sudo docker info &>/dev/null; then
+    log_info "Docker daemon is reachable (server $(sudo docker version -f '{{.Server.Version}}' 2>/dev/null))."
   fi
-EONG
+  
+  log_info "Ensuring traefik_network exists..."
+  if sudo docker network ls --format '{{.Name}}' | grep -qx 'traefik_network'; then
+    log_success "Docker network 'traefik_network' already exists"
+  else
+    if sudo docker network create traefik_network 2>/dev/null; then
+      log_success "Docker network 'traefik_network' created"
+    else
+      log_info "⚠️  Could not create traefik_network (not critical). Create it later: sudo docker network create traefik_network"
+    fi
+  fi
   
   log_success "Docker installed successfully."
-  log_info "Note: Docker group has been applied. You can use docker commands without sudo."
-  log_info "If you encounter permission issues, run: newgrp docker"
+  log_info "Your user was added to the 'docker' group. Open a new SSH session (or run: newgrp docker) before using docker without sudo."
 }
 
 install_python() {
