@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: ${TRAEFIK_IMAGE}
+    image: traefik:v3.0
     restart: always
     ports:
       - "80:80"
@@ -13,7 +13,7 @@ services:
       # Docker Provider
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=${TRAEFIK_NETWORK}
+      - --providers.docker.network=traefik_network
 
       # Entry Points - HTTP/HTTPS
       - --entrypoints.web.address=:80
@@ -36,7 +36,7 @@ services:
       - --certificatesresolvers.cloudflare.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
 
       # Logging
-      - --log.level=${TRAEFIK_LOG_LEVEL}
+      - --log.level=INFO
       - --accesslog=true
       - --accesslog.format=common
     environment:
@@ -48,10 +48,10 @@ services:
       - ./acme.json:/acme.json
       - /var/log/traefik:/var/log/traefik
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`${TRAEFIK_HOST}.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls=true"
       - "traefik.http.routers.dashboard.tls.certresolver=cloudflare"
@@ -60,17 +60,17 @@ services:
       - "traefik.http.routers.dashboard.middlewares=dashboard"
 
   portainer:
-    image: ${PORTAINER_IMAGE}
+    image: portainer/portainer-ce:latest
     container_name: portainer
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.portainer.rule=Host(`${PORTAINER_HOST}.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.portainer.entrypoints=websecure"
       - "traefik.http.routers.portainer.tls=true"
       - "traefik.http.routers.portainer.tls.certresolver=cloudflare"
@@ -78,7 +78,7 @@ services:
 
   stirling-pdf:
     container_name: spdf
-    image: ${STIRLING_PDF_IMAGE}
+    image: docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest
     volumes:
       - ./StirlingPDF/trainingData:/usr/share/tessdata # Required for extra OCR languages
       - ./StirlingPDF/extraConfigs:/configs
@@ -86,13 +86,13 @@ services:
       - ./StirlingPDF/logs:/logs/
       - ./StirlingPDF/pipeline:/pipeline/
     environment:
-      - DOCKER_ENABLE_SECURITY=${STIRLING_PDF_SECURITY}
-      - LANGS=${STIRLING_PDF_LANGS}
+      - DOCKER_ENABLE_SECURITY=false
+      - LANGS=en_GB
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pdf.rule=Host(`${PDF_HOST}.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.pdf.rule=Host(`pdf.${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.pdf.entrypoints=websecure"
       - "traefik.http.routers.pdf.tls=true"
       - "traefik.http.routers.pdf.tls.certresolver=cloudflare"
@@ -113,7 +113,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES16_PORT:-5432}:5432" # Bind to localhost only for SSH forwarding
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     healthcheck:
       test:
         ["CMD-SHELL", "pg_isready -U ${POSTGRES16_USER} -d ${POSTGRES16_DB}"]
@@ -136,7 +136,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES17_PORT:-5433}:5432" # Bind to localhost only for SSH forwarding
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     healthcheck:
       test:
         [
@@ -163,7 +163,7 @@ services:
     ports:
       - "127.0.0.1:${MONGO8_PORT:-27017}:27017" # Bind to localhost only for SSH forwarding
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -182,7 +182,7 @@ services:
     ports:
       - "127.0.0.1:${REDIS7_PORT:-6379}:6379" # Bind to localhost only for SSH forwarding
     networks:
-      - ${TRAEFIK_NETWORK}
+      - traefik_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -198,5 +198,5 @@ volumes:
   redis7_data:
 
 networks:
-  my_network:
+  traefik_network:
     external: true

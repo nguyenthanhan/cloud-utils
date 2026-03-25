@@ -725,10 +725,10 @@ install_docker() {
   log_info "Applying docker group permissions to current session..."
   newgrp docker <<EONG
   # Create docker network
-  if docker network ls | grep -q "my_network"; then
-    echo "✅ Docker network 'my_network' already exists"
+  if docker network ls | grep -q "traefik_network"; then
+    echo "✅ Docker network 'traefik_network' already exists"
   else
-    docker network create my_network 2>/dev/null && echo "✅ Docker network 'my_network' created" || echo "⚠️  Failed to create network (not critical)"
+    docker network create traefik_network 2>/dev/null && echo "✅ Docker network 'traefik_network' created" || echo "⚠️  Failed to create network (not critical)"
   fi
 EONG
   

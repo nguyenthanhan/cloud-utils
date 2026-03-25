@@ -38,7 +38,7 @@ Common flags:
 
 ```bash
 cp .env.example .env
-docker network create my_network
+docker network create traefik_network
 touch acme.json && chmod 600 acme.json
 docker compose up -d
 ```
