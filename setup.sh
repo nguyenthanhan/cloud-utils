@@ -91,6 +91,7 @@ declare -A FLAGS=(
   ["firewall"]=false
   ["ssh-security"]=false
   ["fail2ban"]=false
+  ["tailscale"]=false
 )
 
 declare -A VALUES=(
@@ -740,6 +741,26 @@ install_docker() {
   log_info "Your user was added to the 'docker' group. Open a new SSH session (or run: newgrp docker) before using docker without sudo."
 }
 
+install_tailscale() {
+  if ! command -v curl >/dev/null 2>&1; then
+    log_info "curl not found; installing curl..."
+    sudo apt update -y
+    sudo apt install -y curl
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    log_error "curl is required but could not be installed."
+    return 1
+  fi
+  # Tailscale docs: curl -fsSL https://tailscale.com/install.sh | sh (here: sudo sh when not root)
+  log_info "Installing Tailscale: curl -fsSL https://tailscale.com/install.sh | sh"
+  curl -fsSL https://tailscale.com/install.sh | sudo sh || return 1
+  if ! command -v tailscale >/dev/null 2>&1; then
+    log_error "tailscale not found in PATH after install."
+    return 1
+  fi
+  log_success "Tailscale install finished. Next: sudo tailscale up"
+}
+
 install_python() {
   log_info "Installing Python..."
   sudo apt -y update
@@ -793,7 +814,7 @@ configure_ssh_security() {
   
   # Configure SSH security settings
   # Disable root login
-  sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
   
   # Disable password authentication (KEY ONLY!)
   sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
@@ -998,6 +1019,11 @@ new_vps_setup() {
   else
     CHOICES["docker"]="no"
   fi
+  if ask_install "Tailscale (mesh VPN)"; then
+    CHOICES["tailscale"]="yes"
+  else
+    CHOICES["tailscale"]="no"
+  fi
   
   # Proxy
   echo ""
@@ -1127,6 +1153,11 @@ new_vps_setup() {
     echo "☁️ Installing Docker..."
     install_docker
   fi
+  if [ "${CHOICES[tailscale]}" = "yes" ]; then
+    echo ""
+    echo "☁️ Installing Tailscale..."
+    install_tailscale
+  fi
   
   # Proxy
   if [ "${CHOICES[proxy]}" = "yes" ]; then
@@ -1220,6 +1251,7 @@ declare -A COMPONENT_REGISTRY=(
   ["uv"]="install_uv"
   ["rclone"]="install_rclone"
   ["docker"]="install_docker"
+  ["tailscale"]="install_tailscale"
   ["proxy"]="install_proxy"
   ["zsh"]="install_zsh"
   ["zimfw"]="install_zimfw"
@@ -1245,6 +1277,7 @@ declare -A COMPONENT_DESCRIPTIONS=(
   ["uv"]="UV Python package manager"
   ["rclone"]="Rclone cloud storage sync"
   ["docker"]="Docker"
+  ["tailscale"]="Tailscale mesh VPN"
   ["proxy"]="Squid proxy server"
   ["zsh"]="Zsh shell"
   ["zimfw"]="Zim framework"
@@ -1268,7 +1301,7 @@ run_installations() {
   
   # Run installations in order
   for component in apt-update basic-tools set-password firewall ssh-security fail2ban \
-                   fnm python uv rclone docker proxy zsh zimfw bash-it zoxide eza fastfetch \
+                   fnm python uv rclone docker tailscale proxy zsh zimfw bash-it zoxide eza fastfetch \
                    qbittorrent xrdp firefox verify-xrdp; do
     
     if [ "${FLAGS[$component]:-false}" = "true" ]; then
@@ -1323,6 +1356,7 @@ run_installations() {
     echo "  -zsh -zimfw -zoxide -eza -fastfetch"
     echo "  -xrdp [-xrdp-port=PORT] -firefox -qbittorrent"
     echo "  -firewall -ssh-security -fail2ban"
+    echo "  -tailscale"
     echo "  -basic-tools -apt-update -set-password -verify-xrdp"
     echo ""
     echo "Example: ./setup.sh -docker -python -zsh -firewall"
