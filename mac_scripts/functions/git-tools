@@ -7,6 +7,40 @@ _git_check_repo() {
     return 0
 }
 
+# Helper function to prune a stale remote-tracking ref when the remote branch was deleted
+_prune_deleted_remote_branch_ref() {
+    local remote="$1"
+    local branch="$2"
+    local remote_ref="refs/remotes/$remote/$branch"
+
+    if [ -z "$remote" ] || [ -z "$branch" ]; then
+        return 0
+    fi
+
+    if ! git show-ref --verify --quiet "$remote_ref"; then
+        return 0
+    fi
+
+    git ls-remote --exit-code --heads "$remote" "$branch" > /dev/null 2>&1
+    local ls_remote_status=$?
+
+    if [ "$ls_remote_status" -eq 0 ]; then
+        return 0
+    fi
+
+    if [ "$ls_remote_status" -eq 2 ]; then
+        echo "--- 🧹 Remote $remote/$branch no longer exists; pruning stale tracking ref..."
+        if git fetch "$remote" --prune; then
+            echo "--- ✅ Pruned stale remote-tracking refs"
+        else
+            echo "--- ⚠️ Failed to prune stale remote-tracking refs; continuing with push"
+        fi
+        return 0
+    fi
+
+    echo "--- ⚠️ Could not verify whether $remote/$branch exists; continuing with push"
+}
+
 # Function 1: Safe force push
 git_safe_force_push() {
     if ! _git_check_repo; then
@@ -44,6 +78,8 @@ git_safe_force_push() {
         echo "--- ⚠️ No upstream tracking branch configured"
         echo "--- ℹ️ Will push explicitly to $target_remote/$current_branch"
     fi
+
+    _prune_deleted_remote_branch_ref "$target_remote" "$current_branch"
 
     push_output=$(git push --force-with-lease "$target_remote" "HEAD:$current_branch" 2>&1)
     if [ $? -eq 0 ]; then

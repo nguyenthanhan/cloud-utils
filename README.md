@@ -9,6 +9,53 @@ git clone https://github.com/nguyenthanhan/cloud-utils.git
 cd cloud-utils
 ```
 
+### New Mac setup
+
+On a new Mac, install Apple's command line tools first:
+
+```bash
+xcode-select --install
+```
+
+Install Homebrew if it is not available yet:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+Clone this repo to `~/Documents/cloud-utils`. The bundled `.zshrc` expects this exact path.
+
+```bash
+mkdir -p ~/Documents
+git clone https://github.com/nguyenthanhan/cloud-utils.git ~/Documents/cloud-utils
+```
+
+Install the common CLI dependencies used by `.zshrc`, aliases, and scripts:
+
+```bash
+brew install eza bat zoxide fnm rbenv libpq
+```
+
+`libpq` provides PostgreSQL client tools such as `psql`, `pg_dump`, and `pg_restore` without running a local PostgreSQL server. `dbt sync postgres` can also use `postgresql@18` if you prefer the full Homebrew formula.
+
+Create the `~/.zshrc` hard link from this repo, then restart the terminal:
+
+```bash
+zsh ~/Documents/cloud-utils/mac_scripts/create_link_zshrc
+exec zsh
+```
+
+If `~/.zshrc` already exists, the script backs it up automatically to `~/.zshrc.backup.<timestamp>` before creating the hard link.
+
+After restarting the shell, verify the repo scripts are on `PATH`:
+
+```bash
+gt fetch
+buc list
+dbt --help
+```
+
 ## Usage
 
 ### VPS setup
@@ -46,27 +93,27 @@ docker compose up -d
 ### macOS scripts
 
 ```bash
-zsh mac_scripts/dbt --help
-zsh mac_scripts/dbt connect
-zsh mac_scripts/dbt list --status
-zsh mac_scripts/dbt sync postgres -s 1 -d 1
-zsh mac_scripts/dbt sync mongodb -s 1 -d 1
+zsh ~/Documents/cloud-utils/mac_scripts/dbt --help
+zsh ~/Documents/cloud-utils/mac_scripts/dbt connect
+zsh ~/Documents/cloud-utils/mac_scripts/dbt list --status
+zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -s 1 -d 1
+zsh ~/Documents/cloud-utils/mac_scripts/dbt sync mongodb -s 1 -d 1
 ```
 
 ```bash
-zsh mac_scripts/create_link_zshrc
+zsh ~/Documents/cloud-utils/mac_scripts/create_link_zshrc
 ```
 
 ```bash
-zsh mac_scripts/buc
-zsh mac_scripts/buc list
-zsh mac_scripts/buc add <cask>
-zsh mac_scripts/buc remove <cask>
+zsh ~/Documents/cloud-utils/mac_scripts/buc
+zsh ~/Documents/cloud-utils/mac_scripts/buc list
+zsh ~/Documents/cloud-utils/mac_scripts/buc add <cask>
+zsh ~/Documents/cloud-utils/mac_scripts/buc remove <cask>
 ```
 
 ```bash
-zsh mac_scripts/gt fetch
-zsh mac_scripts/gt push
+zsh ~/Documents/cloud-utils/mac_scripts/gt fetch
+zsh ~/Documents/cloud-utils/mac_scripts/gt push
 ```
 
 ### MTProto

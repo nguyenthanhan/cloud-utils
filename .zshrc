@@ -154,17 +154,16 @@ fi
 # zoxide
 eval "$(zoxide init zsh)"
 
-# postgresql
-export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
+# PostgreSQL client tools
+if [ -d "/opt/homebrew/opt/libpq/bin" ]; then
+  export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
+fi
 
 # fnm
 FNM_PATH="/opt/homebrew/opt/fnm/bin"
 if [ -d "$FNM_PATH" ]; then
   eval "`fnm env`"
 fi
-
-# GitLab Knowledge Graph
-export PATH="$HOME/.local/bin:$PATH"
 
 # Added by Antigravity
 export PATH="/Users/heimer/.antigravity/antigravity/bin:$PATH"

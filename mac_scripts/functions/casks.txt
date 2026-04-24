@@ -35,6 +35,7 @@ rustdesk
 slack
 spotify
 tableplus
+tablepro
 telegram
 the-unarchiver
 trae

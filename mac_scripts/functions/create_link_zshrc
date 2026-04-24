@@ -7,6 +7,7 @@
 create_link_zshrc() {
     local source_file="$HOME/Documents/cloud-utils/.zshrc"
     local target_file="$HOME/.zshrc"
+    local backup_file=""
     
     # Check if files are already hard linked (same inode)
     if [[ -e "$target_file" ]] && [[ -e "$source_file" ]]; then
@@ -17,15 +18,25 @@ create_link_zshrc() {
     fi
     
     if [[ -e "$target_file" ]]; then
+        backup_file="$target_file.backup.$(date +%Y%m%d%H%M%S)"
         echo "⚠️  $target_file already exists"
-        echo "   Please remove it manually if you want to create the hard link"
-    else
-        if ln "$source_file" "$target_file"; then
-            echo "✅ Created hard link: $target_file <-> $source_file"
-            echo "   Both files now share the same content"
-        else
-            echo "❌ Failed to create hard link"
+        echo "   Backing up to: $backup_file"
+
+        if ! mv "$target_file" "$backup_file"; then
+            echo "❌ Failed to back up existing $target_file"
             return 1
         fi
+    fi
+
+    if ln "$source_file" "$target_file"; then
+        echo "✅ Created hard link: $target_file <-> $source_file"
+        echo "   Both files now share the same content"
+    else
+        echo "❌ Failed to create hard link"
+        if [[ -n "$backup_file" && -e "$backup_file" && ! -e "$target_file" ]]; then
+            mv "$backup_file" "$target_file"
+            echo "   Restored backup to: $target_file"
+        fi
+        return 1
     fi
 }

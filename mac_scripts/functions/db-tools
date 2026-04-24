@@ -1302,15 +1302,58 @@ _exec_psql() {
     fi
 }
 
-# Function to find PostgreSQL 18 client version
-_find_pg18_version() {
-    local pg_dump_path="/opt/homebrew/opt/postgresql@18/bin/pg_dump"
-    
-    if [[ -f "$pg_dump_path" ]]; then
-        echo "18|$pg_dump_path"
-    else
-        echo ""
+# Helper function to extract PostgreSQL client major version
+_get_pg_client_major_version() {
+    local pg_bin="$1"
+    "$pg_bin" --version 2>/dev/null | sed -nE 's/.*PostgreSQL\)?[[:space:]]+([0-9]+).*/\1/p' | head -1
+}
+
+# Function to find PostgreSQL client tools
+_find_postgres_client_tools() {
+    local psql_bin=""
+    local pg_dump_bin=""
+    local pg_restore_bin=""
+    local pg_version=""
+    local source_label=""
+
+    # 1. Prefer explicit PATH. This lets ~/.zshrc choose between libpq and postgresql@18.
+    psql_bin=$(command -v psql 2>/dev/null)
+    pg_dump_bin=$(command -v pg_dump 2>/dev/null)
+    pg_restore_bin=$(command -v pg_restore 2>/dev/null)
+    if [[ -n "$psql_bin" && -n "$pg_dump_bin" && -n "$pg_restore_bin" ]]; then
+        pg_version=$(_get_pg_client_major_version "$pg_dump_bin")
+        source_label="PATH"
+        echo "${pg_version:-unknown}|$psql_bin|$pg_dump_bin|$pg_restore_bin|$source_label"
+        return 0
     fi
+
+    # 2. Homebrew libpq provides client-only tools without a local PostgreSQL server.
+    if [[ -x "/opt/homebrew/opt/libpq/bin/psql" && \
+          -x "/opt/homebrew/opt/libpq/bin/pg_dump" && \
+          -x "/opt/homebrew/opt/libpq/bin/pg_restore" ]]; then
+        psql_bin="/opt/homebrew/opt/libpq/bin/psql"
+        pg_dump_bin="/opt/homebrew/opt/libpq/bin/pg_dump"
+        pg_restore_bin="/opt/homebrew/opt/libpq/bin/pg_restore"
+        pg_version=$(_get_pg_client_major_version "$pg_dump_bin")
+        source_label="Homebrew libpq"
+        echo "${pg_version:-unknown}|$psql_bin|$pg_dump_bin|$pg_restore_bin|$source_label"
+        return 0
+    fi
+
+    # 3. Fallback to Homebrew PostgreSQL 18 full formula.
+    if [[ -x "/opt/homebrew/opt/postgresql@18/bin/psql" && \
+          -x "/opt/homebrew/opt/postgresql@18/bin/pg_dump" && \
+          -x "/opt/homebrew/opt/postgresql@18/bin/pg_restore" ]]; then
+        psql_bin="/opt/homebrew/opt/postgresql@18/bin/psql"
+        pg_dump_bin="/opt/homebrew/opt/postgresql@18/bin/pg_dump"
+        pg_restore_bin="/opt/homebrew/opt/postgresql@18/bin/pg_restore"
+        pg_version=$(_get_pg_client_major_version "$pg_dump_bin")
+        source_label="Homebrew postgresql@18"
+        echo "${pg_version:-18}|$psql_bin|$pg_dump_bin|$pg_restore_bin|$source_label"
+        return 0
+    fi
+
+    echo ""
 }
 
 sync_dots_start() {
@@ -1377,23 +1420,23 @@ perform_postgres_sync() {
         fi
     fi
     
-    # Use PostgreSQL 18 client tools (backward compatible with 16, 17, 18)
-    local pg_info=$(_find_pg18_version)
+    # Use PostgreSQL client tools from PATH, Homebrew libpq, or Homebrew postgresql@18.
+    local pg_info=$(_find_postgres_client_tools)
     
     if [[ -z "$pg_info" ]]; then
-        echo "❌ Error: PostgreSQL 18 client tools not found"
-        echo "   Please install PostgreSQL 18: brew install postgresql@18"
+        echo "❌ Error: PostgreSQL client tools not found"
+        echo "   Install client-only tools: brew install libpq"
+        echo "   Or install PostgreSQL 18: brew install postgresql@18"
+        echo "   Then ensure psql, pg_dump, and pg_restore are available on PATH"
         return 1
     fi
     
-    # Extract version and path
+    # Extract version and paths
     local pg_version=$(echo "$pg_info" | cut -d'|' -f1)
-    local pg_dump_path=$(echo "$pg_info" | cut -d'|' -f2)
-    
-    # Use PostgreSQL 18 for all tools (works for all lower versions: 16, 17, 18)
-    local psql_bin="/opt/homebrew/opt/postgresql@${pg_version}/bin/psql"
-    local pg_dump_bin="$pg_dump_path"
-    local pg_restore_bin="/opt/homebrew/opt/postgresql@${pg_version}/bin/pg_restore"
+    local psql_bin=$(echo "$pg_info" | cut -d'|' -f2)
+    local pg_dump_bin=$(echo "$pg_info" | cut -d'|' -f3)
+    local pg_restore_bin=$(echo "$pg_info" | cut -d'|' -f4)
+    local pg_client_source=$(echo "$pg_info" | cut -d'|' -f5)
     
     # Extra args for verbose mode
     local pg_dump_args=()
@@ -1411,6 +1454,7 @@ perform_postgres_sync() {
         echo "PostgreSQL Sync: ${src_db}"
         echo "Source: ${src_user}@${src_host}:${src_port}"
         echo "Target: ${tgt_user}@${tgt_host}:${tgt_port}"
+        echo "Client: PostgreSQL ${pg_version} (${pg_client_source})"
         echo "-------------------------------------"
     fi
     
@@ -1818,15 +1862,14 @@ test_postgres_connection() {
     [[ "$url" =~ sslmode=require ]] && ssl_mode="require"
     
     # Find PostgreSQL client
-    local pg_info=$(_find_pg18_version)
+    local pg_info=$(_find_postgres_client_tools)
     if [[ -z "$pg_info" ]]; then
         # If PostgreSQL client not found, skip test but return success (can't test)
         [[ "$quiet" != "true" ]] && echo "⚠️  Cannot test connection (PostgreSQL client not found), proceeding anyway..."
         return 0
     fi
     
-    local pg_version=$(echo "$pg_info" | cut -d'|' -f1)
-    local psql_bin="/opt/homebrew/opt/postgresql@${pg_version}/bin/psql"
+    local psql_bin=$(echo "$pg_info" | cut -d'|' -f2)
     
     # Test connection by running a simple query
     local conn_error_file=$(mktemp)
