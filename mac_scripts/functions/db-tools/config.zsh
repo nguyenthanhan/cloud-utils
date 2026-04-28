@@ -4,6 +4,9 @@
 
 # Global variables
 typeset -g SSH_TIMEOUT=10
+typeset -g DBT_SECRETS_LOADED="false"
+typeset -g DBT_SECRETS_FILE=""
+typeset -g DBT_SECRETS_MTIME=""
 
 # Find secrets file - prioritize source code root, fallback to iCloud
 find_secrets_file() {
@@ -65,6 +68,12 @@ find_secrets_file() {
 # Shared Utility Functions
 # =============================================================================
 
+# Get file modification time (epoch seconds)
+_get_file_mtime() {
+    local file_path="$1"
+    stat -f "%m" "$file_path" 2>/dev/null
+}
+
 # Load secrets from secrets file
 load_secrets() {
     local secrets_file
@@ -76,7 +85,19 @@ load_secrets() {
         export POSTGRES_TARGETS=()
         export MONGO_SOURCES=()
         export MONGO_TARGETS=()
+        DBT_SECRETS_LOADED="false"
+        DBT_SECRETS_FILE=""
+        DBT_SECRETS_MTIME=""
         return 1
+    fi
+
+    local secrets_mtime
+    secrets_mtime=$(_get_file_mtime "$secrets_file")
+    if [[ "$DBT_SECRETS_LOADED" == "true" ]] && \
+       [[ "$DBT_SECRETS_FILE" == "$secrets_file" ]] && \
+       [[ -n "$secrets_mtime" ]] && \
+       [[ "$DBT_SECRETS_MTIME" == "$secrets_mtime" ]]; then
+        return 0
     fi
     
     # Source secrets file - suppress all output like db_connection_tool does
@@ -120,6 +141,10 @@ load_secrets() {
         echo "⚠️  Warning: No configurations found in secrets file"
         echo "   Please define VPS_CONFIGS, POSTGRES_SOURCES, and/or MONGO_SOURCES in $secrets_file"
     fi
+
+    DBT_SECRETS_LOADED="true"
+    DBT_SECRETS_FILE="$secrets_file"
+    DBT_SECRETS_MTIME="$secrets_mtime"
 }
 
 # Log message to stdout

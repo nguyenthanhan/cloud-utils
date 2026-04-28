@@ -90,19 +90,20 @@ test_ssh_connection() {
     local user=$1
     local ip=$2
     local vps_name=$3
+    local quiet="${4:-false}"
     local vps_host="${user}@${ip}"
     
-    log "INFO" "Testing SSH connection to ${vps_name} (${ip})..."
+    [[ "$quiet" != "true" ]] && log "INFO" "Testing SSH connection to ${vps_name} (${ip})..."
     
     # Use timeout if available, otherwise use SSH's ConnectTimeout
     if command -v timeout >/dev/null 2>&1; then
         if timeout ${SSH_TIMEOUT} ssh -o ConnectTimeout=${SSH_TIMEOUT} \
            -o BatchMode=yes -o StrictHostKeyChecking=no \
            "$vps_host" exit 2>/dev/null; then
-            log "INFO" "SSH connection to ${vps_name} successful"
+            [[ "$quiet" != "true" ]] && log "INFO" "SSH connection to ${vps_name} successful"
             return 0
         else
-            log "ERROR" "SSH connection to ${vps_name} (${ip}) failed"
+            [[ "$quiet" != "true" ]] && log "ERROR" "SSH connection to ${vps_name} (${ip}) failed"
             return 1
         fi
     else
@@ -110,10 +111,10 @@ test_ssh_connection() {
         if ssh -o ConnectTimeout=${SSH_TIMEOUT} \
            -o BatchMode=yes -o StrictHostKeyChecking=no \
            "$vps_host" exit 2>/dev/null; then
-            log "INFO" "SSH connection to ${vps_name} successful"
+            [[ "$quiet" != "true" ]] && log "INFO" "SSH connection to ${vps_name} successful"
             return 0
         else
-            log "ERROR" "SSH connection to ${vps_name} (${ip}) failed"
+            [[ "$quiet" != "true" ]] && log "ERROR" "SSH connection to ${vps_name} (${ip}) failed"
             return 1
         fi
     fi
@@ -224,7 +225,7 @@ connect_db() {
     local service_filter=$1  # Optional: connect to specific service
     
     {
-        echo "🔌 Establishing database connections..."
+        echo "🔌 Connecting tunnels..."
         [[ -n "$service_filter" ]] && echo "   Filter: $service_filter"
         echo ""
         
@@ -260,22 +261,20 @@ connect_db() {
                 continue
             fi
             
-            # Parse config - don't use subshell to preserve variables
-            local parse_error_file=$(mktemp)
-            if ! parse_config "$config" vps_name user ip service_name local_port target_host target_port 2>"$parse_error_file"; then
+            # Parse config - keep success path lightweight (no temp file)
+            if ! parse_config "$config" vps_name user ip service_name local_port target_host target_port 2>/dev/null; then
                 ((skipped_invalid++))
                 invalid_configs_list+=("$config")
                 # Show error for invalid config (filter debug output)
-                local parse_error=$(cat "$parse_error_file" 2>/dev/null)
+                local parse_error
+                parse_error=$(parse_config "$config" _vps_name _user _ip _service_name _local_port _target_host _target_port 2>&1 >/dev/null)
                 if [[ -n "$parse_error" ]]; then
                     echo "$parse_error" | filter_debug >&2
                 else
                     echo "❌ Invalid config format: $config" >&2
                 fi
-                rm -f "$parse_error_file"
                 continue
             fi
-            rm -f "$parse_error_file"
         
         if is_port_in_use "${local_port}"; then
             if is_our_ssh_tunnel "${local_port}"; then
@@ -314,11 +313,11 @@ connect_db() {
             IFS='|' read -r vps_name user ip <<< "$vps_key"
             local vps_host="${user}@${ip}"
             
-            echo "📡 Connecting to services via ${vps_name} (${ip})..."
+            echo "Via ${vps_name}:"
             
             # Test SSH connection first (optional, skip if test fails but still try to connect)
             # SSH will fail on its own if connection is not possible
-            if ! test_ssh_connection "$user" "$ip" "$vps_name"; then
+            if ! test_ssh_connection "$user" "$ip" "$vps_name" "true"; then
                 echo "⚠️  SSH test failed for ${vps_name}, but will still attempt connection..."
             fi
             
@@ -329,13 +328,10 @@ connect_db() {
             
             for config in "${configs[@]}"; do
                 local _vps_name _user _ip service_name local_port target_host target_port
-                # Parse config - don't use subshell to preserve variables
-                local parse_error_file=$(mktemp)
-                if parse_config "$config" _vps_name _user _ip service_name local_port target_host target_port 2>"$parse_error_file"; then
+                if parse_config "$config" _vps_name _user _ip service_name local_port target_host target_port 2>/dev/null; then
                     ssh_args+=("-L" "${local_port}:${target_host}:${target_port}")
                     services+=("   ${service_name}: localhost:${local_port}")
                 fi
-                rm -f "$parse_error_file"
             done
             
             ssh_args+=("${vps_host}")
@@ -346,13 +342,12 @@ connect_db() {
             local ssh_exit_code=$?
             
             if [[ $ssh_exit_code -eq 0 ]]; then
-                echo "✅ Tunnels established:"
+                echo "  Opened:"
                 for service_info in "${services[@]}"; do
-                    echo "$service_info"
+                    echo "    - ${service_info## }"
                     ((newly_connected++))
                 done
                 echo ""
-                log "INFO" "Successfully established tunnels to ${vps_name}"
             else
                 echo "❌ Failed to establish tunnels to ${vps_name}"
                 if [[ -n "$ssh_output" ]]; then
@@ -366,17 +361,21 @@ connect_db() {
         done
     fi
     
-        # Display analytics
+        # Display compact result summary (optimized for quick scanning)
+        local total_services=$((already_connected + newly_connected + failed_connections))
         echo ""
-        echo "📊 CONNECTION ANALYTICS"
-        echo "═══════════════════════════════════════"
-        echo "✅ Already connected: ${already_connected}"
-        echo "🆕 Newly connected:   ${newly_connected}"
-        echo "❌ Failed:            ${failed_connections}"
+        if [[ $failed_connections -gt 0 ]]; then
+            echo "❌ Connect: ${newly_connected} opened | ${already_connected} already on | ${failed_connections} failed (${total_services} total)"
+        elif [[ $newly_connected -gt 0 ]]; then
+            echo "✅ Connect: ${newly_connected} opened | ${already_connected} already on (${total_services} total)"
+        else
+            echo "✅ Connect: nothing to open (all ${already_connected}/${total_services} already on)"
+        fi
+
         if [[ $skipped_invalid -gt 0 ]]; then
-            echo "⚠️  Invalid configs:    ${skipped_invalid}"
+            echo "⚠️  Invalid configs: ${skipped_invalid}"
             echo ""
-            echo "❌ Invalid configuration(s) found:"
+            echo "Invalid configuration(s):"
             local i=1
             for invalid_config in "${invalid_configs_list[@]}"; do
                 echo "   ${i}) ${invalid_config}"
@@ -386,7 +385,6 @@ connect_db() {
             echo "💡 Expected format: VPS_NAME|USER|IP|SERVICE_NAME|LOCAL_PORT|TARGET_HOST|TARGET_PORT"
             echo "💡 Check your secrets file for correct format"
         fi
-        echo "📈 Total services:    $((already_connected + newly_connected))"
         echo ""
     } 2>&1 | filter_debug
 }
@@ -399,7 +397,7 @@ disconnect_db() {
     local service_filter=$1  # Optional: disconnect specific service
     
     {
-        echo "🔌 Closing database tunnels..."
+        echo "🔌 Disconnecting tunnels..."
         [[ -n "$service_filter" ]] && echo "   Filter: $service_filter"
         echo ""
         
@@ -456,7 +454,7 @@ disconnect_db() {
                 ((not_connected++))
             fi
         else
-            echo "ℹ️  ${service_name} (port ${local_port}): Disconnected"
+                echo "ℹ️  ${service_name} (port ${local_port}): Already off"
             ((not_connected++))
         fi
     done
@@ -476,26 +474,26 @@ disconnect_db() {
             # Wait a bit and verify it's actually killed
             sleep 0.5
             if ! kill -0 "$pid" 2>/dev/null; then
-                echo "✅ Disconnected ${#ports[@]} service(s):"
+                echo "Closed:"
                 for service_info in "${services_info[@]}"; do
-                    echo "   - ${service_info}"
+                    echo "  - ${service_info}"
                     ((disconnected++))
                 done
-                log "INFO" "Disconnected PID $pid (ports: ${ports[@]})"
+                log "INFO" "Closed SSH process PID $pid (ports: ${ports[@]})"
             else
                 echo "⚠️  Process still running, trying force kill..."
                 kill -9 "$pid" 2>/dev/null
                 sleep 0.5
                 if ! kill -0 "$pid" 2>/dev/null; then
-                    echo "✅ Force disconnected ${#ports[@]} service(s):"
+                    echo "Closed (forced):"
                     for service_info in "${services_info[@]}"; do
-                        echo "   - ${service_info}"
+                        echo "  - ${service_info}"
                         ((disconnected++))
                     done
                 else
                     echo "❌ Failed to disconnect ${#ports[@]} service(s):"
                     for service_info in "${services_info[@]}"; do
-                        echo "   - ${service_info}"
+                        echo "  - ${service_info}"
                         ((failed_disconnect++))
                     done
                 fi
@@ -503,22 +501,22 @@ disconnect_db() {
         else
             echo "❌ Failed to disconnect ${#ports[@]} service(s) (permission denied?):"
             for service_info in "${services_info[@]}"; do
-                echo "   - ${service_info}"
+                echo "  - ${service_info}"
                 ((failed_disconnect++))
             done
         fi
     done
     
-        # Display analytics
+        # Display compact result summary (optimized for quick scanning)
+        local total_services=$((disconnected + not_connected + failed_disconnect))
         echo ""
-        echo "═══════════════════════════════════════"
-        echo "📊 DISCONNECTION ANALYTICS"
-        echo "═══════════════════════════════════════"
-        echo "✅ Disconnected:     ${disconnected}"
-        echo "ℹ️  Disconnected:    ${not_connected}"
-        [[ $failed_disconnect -gt 0 ]] && echo "❌ Failed:            ${failed_disconnect}"
-        echo "📈 Total services:   $((disconnected + not_connected + failed_disconnect))"
-        echo "═══════════════════════════════════════"
+        if [[ $failed_disconnect -gt 0 ]]; then
+            echo "❌ Disconnect: ${failed_disconnect} failed | ${disconnected} closed | ${not_connected} already off (${total_services} total)"
+        elif [[ $disconnected -gt 0 ]]; then
+            echo "✅ Disconnect: ${disconnected} closed | ${not_connected} already off (${total_services} total)"
+        else
+            echo "✅ Disconnect: nothing to close (${not_connected}/${total_services} already off)"
+        fi
         echo ""
     } 2>&1 | filter_debug
 }
@@ -531,14 +529,13 @@ show_forward_port() {
     {
         local connected=0
         local not_connected=0
+        local conflicts=0
         local invalid_configs=0
         local invalid_configs_list=()
+        local table_rows=()
+        local issues=()
+        local total_services=0
         
-        # Print table header with proper spacing
-        printf "%-5s  %-15s  %-18s  %-18s  %-10s  %-15s  %-8s\n" "STAT" "SERVICE" "LOCAL PORT" "TARGET PORT" "VIA" "IP" "UPTIME"
-        echo "─────────────────────────────────────────────────────────────────────────────────────────────────────────"
-        
-        # Process all services and display in table format
         # Always load secrets to ensure we have the latest configurations
         load_secrets
         
@@ -556,68 +553,78 @@ show_forward_port() {
                 continue
             fi
             
-            # Parse config - don't use subshell to preserve variables
-            local parse_error_file=$(mktemp)
-            if ! parse_config "$config" vps_name user ip service_name local_port target_host target_port 2>"$parse_error_file"; then
+            # Parse config - keep success path lightweight (no temp file)
+            if ! parse_config "$config" vps_name user ip service_name local_port target_host target_port 2>/dev/null; then
                 ((invalid_configs++))
                 invalid_configs_list+=("$config")
-                local parse_error=$(cat "$parse_error_file" 2>/dev/null)
+                local parse_error
+                parse_error=$(parse_config "$config" _vps_name _user _ip _service_name _local_port _target_host _target_port 2>&1 >/dev/null)
                 if [[ -n "$parse_error" ]]; then
                     echo "$parse_error" | filter_debug >&2
                 fi
-                rm -f "$parse_error_file"
                 continue
             fi
-            rm -f "$parse_error_file"
             
             local status_icon=""
+            local status_label=""
             local uptime=""
             local target_info="${target_host}:${target_port}"
+            local local_info=":${local_port}"
+            local status_text=""
+            ((total_services++))
             
             if is_port_in_use "${local_port}"; then
                 if is_our_ssh_tunnel "${local_port}"; then
                     status_icon="🟢"
+                    status_label="UP"
                     uptime=$(get_tunnel_uptime "${local_port}" 2>/dev/null)
                     ((connected++))
                 else
                     status_icon="⚠️"
+                    status_label="BUSY"
                     uptime="Other"
+                    status_text="port occupied by non-SSH process"
+                    issues+=("${status_icon} ${service_name} ${local_info} ${status_text}")
+                    ((conflicts++))
                 fi
             else
                 status_icon="🔴"
+                status_label="DOWN"
                 uptime="-"
+                status_text="tunnel is down"
+                issues+=("${status_icon} ${service_name} ${local_info} ${status_text}")
                 ((not_connected++))
             fi
             
-            # Prepare display values (no truncation needed with better column widths)
-            local display_service="${service_name}"
-            local display_local="localhost:${local_port}"
-            local display_target="${target_info}"
-            local display_via="${vps_name}"
-            local display_ip="${ip}"
-            
-            # Print single row per service only - this is the ONLY output for each service
-            printf "%-4s  %-15s  %-18s  %-18s  %-10s  %-15s  %-8s\n" \
-                "${status_icon}" \
-                "${display_service}" \
-                "${display_local}" \
-                "${display_target}" \
-                "${display_via}" \
-                "${display_ip}" \
-                "${uptime}"
+            table_rows+=("$(printf "%-6s %-15s  %-7s  %-18s  %-10s  %-15s  %-8s" \
+                "${status_label}" \
+                "${service_name}" \
+                "${local_info}" \
+                "${target_info}" \
+                "${vps_name}" \
+                "${ip}" \
+                "${uptime}")")
         done
         
-    echo "─────────────────────────────────────────────────────────────────────────────────────────────────────────"
-        
-        # Display summary
-        if [[ $invalid_configs -gt 0 ]]; then
+        # Display compact summary first
+        echo ""
+        echo "Status: ${connected}/${total_services} connected | ${not_connected}/${total_services} disconnected | ${conflicts} conflict"
+        [[ $invalid_configs -gt 0 ]] && echo "⚠️  Invalid configs: ${invalid_configs} (check secrets format)"
+
+        echo ""
+        printf "%-6s %-15s  %-7s  %-18s  %-10s  %-15s  %-8s\n" "STATUS" "SERVICE" "LOCAL" "TARGET" "VIA" "IP" "UPTIME"
+        echo "───────────────────────────────────────────────────────────────────────────────────────────────"
+        for row in "${table_rows[@]}"; do
+            echo "$row"
+        done
+        echo "───────────────────────────────────────────────────────────────────────────────────────────────"
+
+        if [[ ${#issues[@]} -gt 0 ]]; then
             echo ""
-            echo "⚠️  ${invalid_configs} invalid config(s) - check secrets file format"
-        fi
-        
-        if [[ ${#VPS_CONFIGS[@]} -gt 0 ]]; then
-            echo ""
-            echo "Summary: 🟢 ${connected} connected  |  🔴 ${not_connected} disconnected"
+            echo "Issues:"
+            for issue in "${issues[@]}"; do
+                echo "  - ${issue}"
+            done
         fi
     } 2>&1 | filter_debug
 }
@@ -658,7 +665,7 @@ test_connections() {
             
             echo -n "Testing ${vps_name} (${ip})... "
             echo ""
-            if test_ssh_connection "$user" "$ip" "$vps_name"; then
+            if test_ssh_connection "$user" "$ip" "$vps_name" "true"; then
                 echo "✅ OK"
                 ((success++))
             else
@@ -667,14 +674,13 @@ test_connections() {
             fi
         done
         
+        local total_vps=$((success + failed))
         echo ""
-        echo "═══════════════════════════════════════"
-        echo "📊 TEST RESULTS"
-        echo "═══════════════════════════════════════"
-        echo "✅ Successful:       ${success}"
-        echo "❌ Failed:           ${failed}"
-        echo "📈 Total VPS:        $((success + failed))"
-        echo "═══════════════════════════════════════"
+        if [[ $failed -gt 0 ]]; then
+            echo "❌ SSH Test: ${failed}/${total_vps} failed | ${success}/${total_vps} ok"
+        else
+            echo "✅ SSH Test: all ${success}/${total_vps} VPS reachable"
+        fi
         echo ""
     } 2>&1 | filter_debug
 }
