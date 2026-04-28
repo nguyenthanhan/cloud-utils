@@ -217,7 +217,9 @@ brew_upgrade_casks() {
     return 0
   fi
 
-  brew update && brew upgrade
+  brew update
+  brew upgrade
+  brew tap --repair
 
   # Installed casks (normalize: strip tap prefix)
   local -a installed raw
@@ -274,6 +276,7 @@ brew_upgrade_casks() {
   fi
 
   # Cleanup
-  brew cleanup --prune=all
+  brew cleanup --prune=1 
+  #--prune=all - this is too aggressive and will remove too many packages
 }
 
