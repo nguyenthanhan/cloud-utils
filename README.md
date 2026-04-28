@@ -35,9 +35,13 @@ Install the common CLI dependencies used by `.zshrc`, aliases, and scripts:
 
 ```bash
 brew install eza bat zoxide fnm rbenv libpq
+brew tap mongodb/brew
+brew install mongosh mongodb-database-tools
 ```
 
 `libpq` provides PostgreSQL client tools such as `psql`, `pg_dump`, and `pg_restore` without running a local PostgreSQL server. `dbt sync postgres` can also use `postgresql@18` if you prefer the full Homebrew formula.
+
+`mongosh` and `mongodb-database-tools` provide the MongoDB client, `mongodump`, and `mongorestore` used by `dbt sync mongodb`.
 
 Create the `~/.zshrc` hard link from this repo, then restart the terminal:
 
@@ -97,8 +101,20 @@ zsh ~/Documents/cloud-utils/mac_scripts/dbt --help
 zsh ~/Documents/cloud-utils/mac_scripts/dbt connect
 zsh ~/Documents/cloud-utils/mac_scripts/dbt list --status
 zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -s 1 -d 1
+zsh ~/Documents/cloud-utils/mac_scripts/dbt sync -c -n
+zsh ~/Documents/cloud-utils/mac_scripts/dbt sync -c
+zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -c -n
+zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -c
 zsh ~/Documents/cloud-utils/mac_scripts/dbt sync mongodb -s 1 -d 1
 ```
+
+`dbt sync --clear-backups` (`dbt sync -c`) removes both PostgreSQL and MongoDB backup databases that match the backup naming pattern left by interrupted syncs, such as `<database>_backup_YYYYMMDD_HHMMSS`. Use `--dry-run` (`-n`) to preview without dropping databases.
+
+`dbt sync postgres --clear-backups` (`dbt sync postgres -c`) removes PostgreSQL databases that match the backup naming pattern left by interrupted syncs, such as `<database>_backup_YYYYMMDD_HHMMSS`. By default it checks all PostgreSQL targets. Add `-d <target>` to limit cleanup to one target, or `-s <source>` to limit cleanup to backups for one source database.
+
+MongoDB sync backs up the target database to `<database>_backup_YYYYMMDD_HHMMSS` before restoring. The backup is removed after a successful sync. If sync fails, the tool attempts to restore the backup automatically.
+
+PostgreSQL targets that sync into the `postgres` database, including Supabase targets, use a temporary backup file instead of a backup database. If the sync completes with warnings or rollback fails, the file path is printed in the command output. `dbt sync -c` only removes backup databases, so inspect and remove those temporary files manually after verifying the target data.
 
 ```bash
 zsh ~/Documents/cloud-utils/mac_scripts/create_link_zshrc
@@ -153,21 +169,6 @@ cd rclone
 - Docker and Docker Compose
 - Traefik, Portainer, Stirling PDF
 - PostgreSQL, MongoDB, Redis
-
-## Project Structure
-
-```text
-.
-├── setup.sh
-├── docker-compose.yml
-├── .env.example
-├── dbt_secrets.example
-├── fail2ban-configs/
-├── mac_init/
-├── mac_scripts/
-├── mtproto/
-└── rclone/
-```
 
 ## Contribution Guidelines
 

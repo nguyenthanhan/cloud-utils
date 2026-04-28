@@ -3,6 +3,13 @@
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-# Source and run with arguments
-source "$SCRIPT_DIR/functions/db-tools"
+# Source function modules and run with arguments
+source "$SCRIPT_DIR/functions/db-tools/config.zsh"
+source "$SCRIPT_DIR/functions/db-tools/ui.zsh"
+source "$SCRIPT_DIR/functions/db-tools/connection.zsh"
+source "$SCRIPT_DIR/functions/db-tools/postgres.zsh"
+source "$SCRIPT_DIR/functions/db-tools/mongo.zsh"
+source "$SCRIPT_DIR/functions/db-tools/sync-list.zsh"
+source "$SCRIPT_DIR/functions/db-tools/main.zsh"
+
 db_tools "$@"
