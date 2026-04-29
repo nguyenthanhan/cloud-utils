@@ -58,6 +58,7 @@ After restarting the shell, verify the repo scripts are on `PATH`:
 gt fetch
 buc list
 dbt --help
+2fa
 ```
 
 ## Usage
@@ -97,15 +98,15 @@ docker compose up -d
 ### macOS scripts
 
 ```bash
-zsh ~/Documents/cloud-utils/mac_scripts/dbt --help
-zsh ~/Documents/cloud-utils/mac_scripts/dbt connect
-zsh ~/Documents/cloud-utils/mac_scripts/dbt list --status
-zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -s 1 -d 1
-zsh ~/Documents/cloud-utils/mac_scripts/dbt sync -c -n
-zsh ~/Documents/cloud-utils/mac_scripts/dbt sync -c
-zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -c -n
-zsh ~/Documents/cloud-utils/mac_scripts/dbt sync postgres -c
-zsh ~/Documents/cloud-utils/mac_scripts/dbt sync mongodb -s 1 -d 1
+dbt --help
+dbt connect
+dbt list --status
+dbt sync postgres -s 1 -d 1
+dbt sync -c -n
+dbt sync -c
+dbt sync postgres -c -n
+dbt sync postgres -c
+dbt sync mongodb -s 1 -d 1
 ```
 
 `dbt sync --clear-backups` (`dbt sync -c`) removes both PostgreSQL and MongoDB backup databases that match the backup naming pattern left by interrupted syncs, such as `<database>_backup_YYYYMMDD_HHMMSS`. Use `--dry-run` (`-n`) to preview without dropping databases.
@@ -121,16 +122,22 @@ zsh ~/Documents/cloud-utils/mac_scripts/create_link_zshrc
 ```
 
 ```bash
-zsh ~/Documents/cloud-utils/mac_scripts/buc
-zsh ~/Documents/cloud-utils/mac_scripts/buc list
-zsh ~/Documents/cloud-utils/mac_scripts/buc add <cask>
-zsh ~/Documents/cloud-utils/mac_scripts/buc remove <cask>
+buc
+buc list
+buc add <cask>
+buc remove <cask>
 ```
 
 ```bash
-zsh ~/Documents/cloud-utils/mac_scripts/gt fetch
-zsh ~/Documents/cloud-utils/mac_scripts/gt push
+gt fetch
+gt push
 ```
+
+```bash
+2fa
+```
+
+`2fa` prompts for the Base32 secret without echoing it, copies the current 6-digit TOTP code to the macOS clipboard, and prints `Code copied: <code>`.
 
 ### MTProto
 
